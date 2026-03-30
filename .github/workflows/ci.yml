@@ -34,7 +34,7 @@ jobs:
       - name: Bootstrap project environment (no heavy assets)
         shell: bash -l {0}
         run: |
-          ENV_NAME=robocasa_ci \
+          ENV_NAME=robocasa_telecom \
           DOWNLOAD_ASSETS=0 \
           DOWNLOAD_DATASETS=0 \
           RUN_SETUP_MACROS=0 \
@@ -53,18 +53,18 @@ jobs:
       - name: Compile Python modules
         shell: bash -l {0}
         run: |
-          conda run -n robocasa_ci python -m compileall robocasa_telecom scripts tests
+          conda run -n robocasa_telecom python -m compileall robocasa_telecom scripts tests
 
       - name: Config loading smoke test
         shell: bash -l {0}
         run: |
-          conda run -n robocasa_ci python tests/test_config_loading.py
+          conda run -n robocasa_telecom python tests/test_config_loading.py
 
       - name: Validate explicit missing-assets error path
         shell: bash -l {0}
         run: |
           set +e
-          output=$(cd /tmp && conda run -n robocasa_ci python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 2 2>&1)
+          output=$(cd /tmp && conda run -n robocasa_telecom python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 2 2>&1)
           status=$?
           set -e
 
@@ -98,7 +98,7 @@ jobs:
       - name: Bootstrap with assets (slow)
         shell: bash -l {0}
         run: |
-          ENV_NAME=robocasa_ci_full \
+          ENV_NAME=robocasa_telecom \
           DOWNLOAD_ASSETS=1 \
           DOWNLOAD_DATASETS=0 \
           RUN_SETUP_MACROS=1 \
@@ -108,4 +108,4 @@ jobs:
       - name: Runtime sanity with assets
         shell: bash -l {0}
         run: |
-          conda run -n robocasa_ci_full python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 5
+          conda run -n robocasa_telecom python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 5
