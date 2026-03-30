@@ -6,7 +6,7 @@ Ce document répond à deux besoins:
 
 ## 1) Inventaire complet installé (export exact)
 
-Les exports complets ont été générés le **30 mars 2026** depuis l'environnement `robocasa_telecom_ci`.
+Les exports complets ont été générés le **30 mars 2026** depuis l'environnement `robocasa_telecom`.
 
 - Conda export complet: `docs/packages/conda_list_export_2026-03-30.txt`
 - Pip freeze complet: `docs/packages/pip_freeze_2026-03-30.txt`
@@ -72,8 +72,6 @@ Depuis la racine du dépôt:
 
 ```bash
 mkdir -p docs/packages
-conda run -n robocasa_telecom_ci conda list --export > docs/packages/conda_list_export_YYYY-MM-DD.txt
-conda run -n robocasa_telecom_ci pip freeze > docs/packages/pip_freeze_YYYY-MM-DD.txt
+conda run -n robocasa_telecom conda list --export > docs/packages/conda_list_export_YYYY-MM-DD.txt
+conda run -n robocasa_telecom pip freeze > docs/packages/pip_freeze_YYYY-MM-DD.txt
 ```
-
-Remarque: si vous utilisez un autre nom d'environnement (`robocasa_telecom`), remplacez `robocasa_telecom_ci` dans les commandes.
