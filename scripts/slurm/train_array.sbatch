@@ -37,4 +37,4 @@ fi
 SEED="${SEEDS[$IDX]}"
 echo "Running seed ${SEED} (array index ${IDX})"
 
-PYTHONPATH="${REPO_ROOT}" python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"
+python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"

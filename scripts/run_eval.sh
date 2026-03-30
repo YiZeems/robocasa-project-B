@@ -19,7 +19,7 @@ source "${CONDA_BASE}/etc/profile.d/conda.sh"
 conda activate "${ENV_NAME}"
 cd "${REPO_ROOT}"
 
-PYTHONPATH="${REPO_ROOT}" python -m robocasa_telecom.evaluate \
+python -m robocasa_telecom.evaluate \
   --config "${CONFIG_PATH}" \
   --checkpoint "${CHECKPOINT_PATH}" \
   --num-episodes "${NUM_EPISODES}" \

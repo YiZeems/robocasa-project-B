@@ -53,12 +53,12 @@ jobs:
       - name: Compile Python modules
         shell: bash -l {0}
         run: |
-          conda run -n robocasa_ci env PYTHONPATH=. python -m compileall robocasa_telecom scripts tests
+          conda run -n robocasa_ci python -m compileall robocasa_telecom scripts tests
 
       - name: Config loading smoke test
         shell: bash -l {0}
         run: |
-          conda run -n robocasa_ci env PYTHONPATH=. python tests/test_config_loading.py
+          conda run -n robocasa_ci python tests/test_config_loading.py
 
       - name: Validate explicit missing-assets error path
         shell: bash -l {0}
@@ -108,4 +108,4 @@ jobs:
       - name: Runtime sanity with assets
         shell: bash -l {0}
         run: |
-          conda run -n robocasa_ci_full env PYTHONPATH=. python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 5
+          conda run -n robocasa_ci_full python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 5

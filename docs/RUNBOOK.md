@@ -91,7 +91,7 @@ Artefact attendu:
 ## 6) Visualisation environnement
 
 ```bash
-PYTHONPATH=. python scripts/visualize_env.py --config configs/env/open_single_door.yaml --steps 200
+python scripts/visualize_env.py --config configs/env/open_single_door.yaml --steps 200
 ```
 
 Usage:

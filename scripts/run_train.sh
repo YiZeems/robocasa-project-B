@@ -13,4 +13,4 @@ source "${CONDA_BASE}/etc/profile.d/conda.sh"
 conda activate "${ENV_NAME}"
 cd "${REPO_ROOT}"
 
-PYTHONPATH="${REPO_ROOT}" python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"
+python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"
