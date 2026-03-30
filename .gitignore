@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environments
+.venv/
+.env/
+
+# Experiment artifacts
+logs/
+outputs/
+checkpoints/
+
+# External dependencies
+external/
+
+# OS
+.DS_Store

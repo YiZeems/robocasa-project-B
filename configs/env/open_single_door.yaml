@@ -1,0 +1,22 @@
+env:
+  task: OpenSingleDoor
+  robots: PandaOmron
+  controller: null
+  use_gym_wrapper: true
+  horizon: 400
+  control_freq: 20
+
+  reward_shaping: true
+  use_object_obs: true
+  use_camera_obs: false
+
+  has_renderer: false
+  has_offscreen_renderer: false
+  render_camera: robot0_agentview_center
+  camera_names:
+    - robot0_agentview_center
+  camera_height: 128
+  camera_width: 128
+
+  ignore_done: false
+  hard_reset: true
