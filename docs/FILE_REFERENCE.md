@@ -144,7 +144,8 @@ Ce document décrit, pour chaque fichier versionné du projet, son rôle, les m�
   - clone `robosuite` / `robocasa` dans `external/`,
   - checkout commits fixés,
   - install editable + requirements pip,
-  - setup macros et téléchargements (assets/datasets) pilotés par variables.
+  - setup macros et téléchargements (assets/datasets) pilotés par variables,
+  - validation explicite des assets critiques si `DOWNLOAD_ASSETS=1`.
 - Entrées: variables d'environnement (`ENV_NAME`, commits, flags download...).
 
 ### `scripts/run_train.sh`
@@ -197,6 +198,9 @@ Ce document décrit, pour chaque fichier versionné du projet, son rôle, les m�
 ### `docs/COLLABORATION.md`
 - Rôle: modèle de collaboration Git en équipe de 4.
 
+### `docs/CI.md`
+- Rôle: description du pipeline CI/CD Linux, des jobs automatiques et manuels.
+
 ### `docs/PACKAGES.md`
 - Rôle: inventaire des packages installés et packages utilisés avec explication de leur rôle.
 
@@ -208,3 +212,11 @@ Ce document décrit, pour chaque fichier versionné du projet, son rôle, les m�
 
 ### `docs/packages/pip_freeze_2026-03-30.txt`
 - Rôle: export exhaustif `pip freeze` de l'environnement projet.
+
+## CI/CD
+
+### `.github/workflows/ci.yml`
+- Rôle: pipeline GitHub Actions Linux.
+- Jobs:
+  - `quick-linux` (push/PR): checks rapides + erreur assets explicite.
+  - `full-assets-linux` (manuel): setup avec assets + sanity runtime.

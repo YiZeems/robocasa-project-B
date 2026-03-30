@@ -54,6 +54,7 @@ ENV_NAME=robocasa_telecom \
 ROBOCASA_COMMIT=9a3a78680443734786c9784ab661413edb87067b \
 ROBOSUITE_COMMIT=aaa8b9b214ce8e77e82926d677b4d61d55e577ab \
 DOWNLOAD_ASSETS=1 \
+VERIFY_ASSETS=1 \
 DOWNLOAD_DATASETS=0 \
 bash scripts/setup_conda.sh
 ```
@@ -120,10 +121,12 @@ Par run d'évaluation:
 - [Runbook local + cluster](docs/RUNBOOK.md)
 - [Organisation équipe de 4](docs/COLLABORATION.md)
 - [Packages installés/utilisés](docs/PACKAGES.md)
+- [CI/CD Linux](docs/CI.md)
 - [Référence fichier par fichier](docs/FILE_REFERENCE.md)
 
 ## Compatibilité / points d'attention
 
 - Le projet est basé sur Robosuite et réutilise son API `robosuite.make(...)`.
 - Certaines installations RoboCasa nécessitent le téléchargement des assets kitchen, sinon `reset()` échoue.
+- Le script `scripts/setup_conda.sh` échoue explicitement si `DOWNLOAD_ASSETS=1` mais que les assets critiques ne sont pas présents.
 - Le code convertit explicitement les observations pour rester compatible Gymnasium + SB3 selon la version de wrappers disponible.

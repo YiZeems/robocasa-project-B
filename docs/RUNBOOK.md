@@ -23,6 +23,7 @@ PYTHON_VERSION=3.11 \
 ROBOCASA_COMMIT=9a3a78680443734786c9784ab661413edb87067b \
 ROBOSUITE_COMMIT=aaa8b9b214ce8e77e82926d677b4d61d55e577ab \
 DOWNLOAD_ASSETS=1 \
+VERIFY_ASSETS=1 \
 DOWNLOAD_DATASETS=0 \
 RUN_SETUP_MACROS=1 \
 bash scripts/setup_conda.sh
@@ -137,7 +138,7 @@ Symptôme:
 Correction:
 
 ```bash
-DOWNLOAD_ASSETS=1 bash scripts/setup_conda.sh
+DOWNLOAD_ASSETS=1 VERIFY_ASSETS=1 bash scripts/setup_conda.sh
 ```
 
 ou dans l'environnement actif:
