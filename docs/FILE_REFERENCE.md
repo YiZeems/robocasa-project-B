@@ -154,7 +154,7 @@ Ce document décrit, pour chaque fichier versionné du projet, son rôle, les m�
 
 ### `scripts/run_train.sh`
 - Rôle: wrapper local homogène pour train.
-- Méthode: activation conda + lancement module train avec `PYTHONPATH` repo.
+- Méthode: activation conda + lancement module train.
 
 ### `scripts/run_eval.sh`
 - Rôle: wrapper local homogène pour eval.
