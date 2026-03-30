@@ -1,3 +1,5 @@
+"""CLI wrapper for evaluation entrypoint."""
+
 from .rl.evaluate import main
 
 

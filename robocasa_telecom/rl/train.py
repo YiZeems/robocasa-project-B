@@ -1,3 +1,9 @@
+"""PPO training entrypoint for RoboCasa tasks.
+
+This module is intentionally self-contained so it can be called from local scripts,
+SLURM batch jobs, or direct `python -m` invocations with the same behavior.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -5,6 +11,7 @@ import csv
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import yaml
@@ -18,6 +25,8 @@ from ..utils.success import infer_success
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for training."""
+
     parser = argparse.ArgumentParser(description="Train PPO on RoboCasa task")
     parser.add_argument("--config", required=True, help="Path to train YAML config")
     parser.add_argument("--seed", type=int, default=None, help="Override seed")
@@ -31,6 +40,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def _evaluate_policy(model: PPO, env: Monitor, episodes: int) -> dict[str, float]:
+    """Run a quick deterministic evaluation after training completes."""
+
     returns = []
     success_flags = []
 
@@ -58,11 +69,14 @@ def _evaluate_policy(model: PPO, env: Monitor, episodes: int) -> dict[str, float
 
 
 def _export_training_curve(monitor_path: Path, out_csv: Path) -> None:
+    """Convert SB3 monitor CSV format to a compact plotting-friendly CSV."""
+
     if not monitor_path.exists():
         return
 
     rows: list[dict[str, float]] = []
     with monitor_path.open("r", encoding="utf-8") as f:
+        # SB3 monitor files include JSON metadata comment lines starting with '#'.
         reader = csv.DictReader(line for line in f if not line.startswith("#"))
         for idx, row in enumerate(reader):
             rows.append(
@@ -80,10 +94,9 @@ def _export_training_curve(monitor_path: Path, out_csv: Path) -> None:
         writer.writerows(rows)
 
 
-def main() -> None:
-    args = parse_args()
+def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve config-derived runtime context with CLI overrides."""
 
-    cfg = load_yaml(args.config)
     env_cfg_path = cfg.get("env", {}).get("config_path", "configs/env/open_single_door.yaml")
     env_cfg = load_env_config(env_cfg_path)
 
@@ -98,6 +111,31 @@ def main() -> None:
     )
 
     run_id = f"{env_cfg.task}_seed{seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    return {
+        "env_cfg": env_cfg,
+        "train_cfg": train_cfg,
+        "paths_cfg": paths_cfg,
+        "seed": seed,
+        "total_timesteps": total_timesteps,
+        "run_id": run_id,
+    }
+
+
+def main() -> None:
+    """Train PPO model and export reproducible artifacts."""
+
+    args = parse_args()
+    cfg = load_yaml(args.config)
+    context = _resolve_run_context(cfg, args)
+
+    env_cfg = context["env_cfg"]
+    train_cfg = context["train_cfg"]
+    paths_cfg = context["paths_cfg"]
+    seed = int(context["seed"])
+    total_timesteps = int(context["total_timesteps"])
+    run_id = str(context["run_id"])
+
     output_root = ensure_dir(paths_cfg.get("output_root", "outputs"))
     checkpoint_root = ensure_dir(paths_cfg.get("checkpoint_root", "checkpoints"))
     tensorboard_root = ensure_dir(paths_cfg.get("tensorboard_root", "logs/tensorboard"))
@@ -105,10 +143,12 @@ def main() -> None:
     run_output_dir = ensure_dir(output_root / run_id)
     run_checkpoint_dir = ensure_dir(checkpoint_root / run_id)
 
+    # Single environment setup for baseline PPO.
     env = make_env_from_config(env_cfg, seed=seed)
     monitor_path = run_output_dir / "monitor.csv"
     env = Monitor(env, filename=str(monitor_path))
 
+    # Model configuration is kept YAML-driven for fast experimentation.
     model = PPO(
         policy=train_cfg.get("policy", "MlpPolicy"),
         env=env,
@@ -159,6 +199,7 @@ def main() -> None:
     with (run_output_dir / "train_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
+    # Store resolved config for reproducibility and experiment tracing.
     with (run_output_dir / "resolved_train_config.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
 

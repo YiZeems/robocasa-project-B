@@ -1,19 +1,33 @@
+"""Environment factory and compatibility adapters for RoboCasa + Robosuite.
+
+This module centralizes all environment creation logic so train/eval/sanity use the same
+instantiation path, with explicit fallbacks for version and wrapper differences.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import gymnasium as gym
 import numpy as np
-from gymnasium import spaces
-from gymnasium.spaces import utils as space_utils
+
+try:
+    import gymnasium as gym
+    from gymnasium import spaces
+    from gymnasium.spaces import utils as space_utils
+except ModuleNotFoundError:  # pragma: no cover - handled by runtime checks.
+    gym = None
+    spaces = None
+    space_utils = None
 
 from ..utils.io import load_yaml
 
 
 @dataclass
 class EnvConfig:
+    """Typed environment parameters loaded from YAML."""
+
     task: str = "OpenCabinet"
     robots: str = "PandaOmron"
     controller: str | None = None
@@ -33,8 +47,18 @@ class EnvConfig:
     use_gym_wrapper: bool = False
 
 
-class GymnasiumAdapter(gym.Env):
-    """Adapt robosuite's GymWrapper outputs to Gymnasium's step/reset API."""
+if gym is not None:
+    _GymEnvBase = gym.Env
+else:
+    _GymEnvBase = object
+
+
+class GymnasiumAdapter(_GymEnvBase):
+    """Adapter for robosuite GymWrapper to enforce Gymnasium reset/step contract.
+
+    Some robosuite versions return 4-tuples and others 5-tuples. This adapter normalizes
+    the API and enforces truncation at the configured horizon.
+    """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
@@ -45,16 +69,20 @@ class GymnasiumAdapter(gym.Env):
         self._horizon = int(horizon)
         self._episode_steps = 0
 
+        # Forward action / observation spaces from wrapped env.
         self.action_space = self._env.action_space
         self.observation_space = self._env.observation_space
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
+        """Reset environment and always return `(obs, info)` as Gymnasium expects."""
+
         del options
         self._episode_steps = 0
 
         try:
             out = self._env.reset(seed=seed)
         except TypeError:
+            # Older wrappers may not accept seed argument.
             out = self._env.reset()
 
         if isinstance(out, tuple) and len(out) == 2:
@@ -62,6 +90,8 @@ class GymnasiumAdapter(gym.Env):
         return out, {}
 
     def step(self, action):
+        """Normalize output tuple shape and enforce `truncated` on horizon overflow."""
+
         out = self._env.step(action)
         if not isinstance(out, tuple):
             raise RuntimeError("Unexpected step() output from wrapped environment")
@@ -90,12 +120,23 @@ class GymnasiumAdapter(gym.Env):
         self._env.close()
 
 
-class RawRoboCasaAdapter(gym.Env):
-    """Raw robocasa adapter with dict-observation flattening for SB3 compatibility."""
+class RawRoboCasaAdapter(_GymEnvBase):
+    """Adapter around raw RoboCasa env with observation flattening for SB3.
+
+    Stable-Baselines3 PPO with MLP policy expects flat vector observations. RoboCasa often
+    returns dict observations; this adapter selects numeric leaves and flattens them into a
+    deterministic key order.
+    """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
     def __init__(self, raw_env: Any, horizon: int):
+        if spaces is None or space_utils is None:
+            raise ModuleNotFoundError(
+                "gymnasium is required to build RoboCasa adapters. "
+                "Install requirements-project.txt in the project environment."
+            )
+
         super().__init__()
         self.raw_env = raw_env
         self._horizon = int(horizon)
@@ -117,6 +158,8 @@ class RawRoboCasaAdapter(gym.Env):
 
     @staticmethod
     def _select_obs(obs: Any) -> dict[str, np.ndarray]:
+        """Extract numeric observation entries; fallback to single `obs` vector."""
+
         if isinstance(obs, dict):
             selected: dict[str, np.ndarray] = {}
             for key, value in obs.items():
@@ -133,6 +176,8 @@ class RawRoboCasaAdapter(gym.Env):
         return {"obs": arr}
 
     def _build_dict_space(self, obs: Any):
+        """Build Gym Dict space once from first observation."""
+
         selected = self._select_obs(obs)
         ordered_keys = tuple(sorted(selected.keys()))
         dict_space = spaces.Dict(
@@ -149,6 +194,8 @@ class RawRoboCasaAdapter(gym.Env):
         return ordered_keys, dict_space
 
     def _flatten_obs(self, obs: Any) -> np.ndarray:
+        """Flatten observations while keeping a fixed key order across resets/episodes."""
+
         selected = self._select_obs(obs)
         aligned = {
             key: np.asarray(
@@ -161,6 +208,8 @@ class RawRoboCasaAdapter(gym.Env):
         return np.asarray(flat, dtype=np.float32)
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
+        """Reset raw env and return flattened observation."""
+
         del options
         self._episode_steps = 0
         try:
@@ -173,10 +222,27 @@ class RawRoboCasaAdapter(gym.Env):
         return self._flatten_obs(out), {}
 
     def step(self, action):
-        obs, reward, done, info = self.raw_env.step(action)
+        """Support both old and new step tuple conventions from wrapped envs."""
+
+        out = self.raw_env.step(action)
+        if not isinstance(out, tuple):
+            raise RuntimeError("Unexpected step() output from raw RoboCasa env")
+
+        if len(out) == 5:
+            obs, reward, terminated, truncated, info = out
+            terminated = bool(terminated)
+            truncated = bool(truncated)
+        elif len(out) == 4:
+            obs, reward, done, info = out
+            terminated = bool(done)
+            truncated = False
+        else:
+            raise RuntimeError(f"Unexpected step() tuple length: {len(out)}")
+
         self._episode_steps += 1
-        terminated = bool(done)
-        truncated = self._episode_steps >= self._horizon and not terminated
+        if self._episode_steps >= self._horizon and not terminated:
+            truncated = True
+
         return self._flatten_obs(obs), float(reward), terminated, truncated, dict(info or {})
 
     def render(self):
@@ -187,6 +253,8 @@ class RawRoboCasaAdapter(gym.Env):
 
 
 def _resolve_controller_config(env_cfg: EnvConfig):
+    """Resolve controller config with broad compatibility fallbacks."""
+
     from robosuite.controllers import (
         load_composite_controller_config,
         load_part_controller_config,
@@ -204,10 +272,13 @@ def _resolve_controller_config(env_cfg: EnvConfig):
         try:
             return load_part_controller_config(default_controller=env_cfg.controller)
         except Exception:
+            # Last-resort fallback to default controller to avoid hard failure.
             return load_composite_controller_config(controller=None, robot=env_cfg.robots)
 
 
 def load_env_config(path: str | Path) -> EnvConfig:
+    """Load environment YAML and return normalized `EnvConfig`."""
+
     data = load_yaml(path)
     env_data = data.get("env", data)
     camera_names = tuple(env_data.get("camera_names", ["robot0_agentview_center"]))
@@ -239,14 +310,21 @@ def load_env_config(path: str | Path) -> EnvConfig:
 
 
 def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
+    """Instantiate RoboCasa environment using the unified project configuration.
+
+    Raises:
+        RuntimeError: when required RoboCasa assets are missing.
+    """
+
     import robocasa  # noqa: F401  # Register RoboCasa tasks in robosuite.
     import robosuite
     from robosuite.wrappers.gym_wrapper import GymWrapper
 
     controller_cfg = _resolve_controller_config(env_cfg)
     task_name = env_cfg.task
+
+    # Keep compatibility with naming found in course material and helper zip.
     task_aliases = {
-        # Kept for compatibility with course notes / older naming.
         "OpenSingleDoor": "OpenCabinet",
         "OpenDoor": "OpenCabinet",
     }
@@ -274,7 +352,7 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
 
         if env_cfg.use_gym_wrapper:
             try:
-                # keys=None follows RoboCasa workaround shown in the provided guide.
+                # `keys=None` mirrors the known RoboCasa workaround from the provided guide.
                 gym_env = GymWrapper(raw_env, keys=None)
                 env = GymnasiumAdapter(
                     gym_env=gym_env,
@@ -282,7 +360,7 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
                     horizon=env_cfg.horizon,
                 )
             except Exception:
-                # Fallback to raw adapter if GymWrapper is unstable for a given task/version combo.
+                # Fallback to raw adapter if GymWrapper breaks on a version combination.
                 env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
         else:
             env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)

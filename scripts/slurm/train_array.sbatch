@@ -9,6 +9,7 @@
 #SBATCH --output=logs/slurm/%x-%A_%a.out
 #SBATCH --error=logs/slurm/%x-%A_%a.err
 
+# SLURM array launcher: one seed per array index.
 set -euo pipefail
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
@@ -24,6 +25,7 @@ CONDA_BASE="$(conda info --base)"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 conda activate "${ENV_NAME}"
 
+# Convert comma-separated seed list into indexed bash array.
 IFS=',' read -r -a SEEDS <<< "${SEEDS_CSV}"
 IDX="${SLURM_ARRAY_TASK_ID:-0}"
 

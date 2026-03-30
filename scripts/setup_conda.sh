@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
+# Bootstrap reproducible RoboCasa training environment (Conda + pinned repos).
 set -euo pipefail
 
+# Environment settings (overridable at invocation time).
 ENV_NAME="${ENV_NAME:-robocasa_telecom}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
 ROBOCASA_COMMIT="${ROBOCASA_COMMIT:-9a3a78680443734786c9784ab661413edb87067b}"
 ROBOSUITE_COMMIT="${ROBOSUITE_COMMIT:-aaa8b9b214ce8e77e82926d677b4d61d55e577ab}"
 
+# Optional setup actions for assets/datasets/macros.
 RUN_SETUP_MACROS="${RUN_SETUP_MACROS:-1}"
 DOWNLOAD_ASSETS="${DOWNLOAD_ASSETS:-1}"
 DOWNLOAD_DATASETS="${DOWNLOAD_DATASETS:-0}"
@@ -20,34 +23,42 @@ CONDA_BASE="$(conda info --base)"
 # shellcheck source=/dev/null
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 
+# Create project env only if absent (idempotent script behavior).
 if ! conda env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
   conda create -y -n "${ENV_NAME}" "python=${PYTHON_VERSION}" pip
 fi
 
 conda activate "${ENV_NAME}"
 
+# Upgrade packaging tools before editable installs.
 python -m pip install --upgrade pip setuptools wheel
 
 mkdir -p external logs/slurm outputs checkpoints
 
+# Clone robosuite if missing, otherwise keep existing checkout and refresh.
 if [ ! -d external/robosuite/.git ]; then
   git clone https://github.com/ARISE-Initiative/robosuite.git external/robosuite
 fi
 
+# Clone robocasa if missing, otherwise keep existing checkout and refresh.
 if [ ! -d external/robocasa/.git ]; then
   git clone https://github.com/robocasa/robocasa.git external/robocasa
 fi
 
+# Pin robosuite revision for deterministic reproducibility.
 git -C external/robosuite fetch --all --tags --prune
 git -C external/robosuite checkout "${ROBOSUITE_COMMIT}"
 
+# Pin robocasa revision for deterministic reproducibility.
 git -C external/robocasa fetch --all --tags --prune
 git -C external/robocasa checkout "${ROBOCASA_COMMIT}"
 
+# Editable installs make local debugging and patching easier.
 python -m pip install -e external/robosuite
 python -m pip install -e external/robocasa
 python -m pip install -r requirements-project.txt
 
+# RoboCasa setup scripts can be interactive; `yes y` keeps CI/cluster non-interactive.
 if [ "${RUN_SETUP_MACROS}" = "1" ]; then
   yes y | python -m robocasa.scripts.setup_macros || true
 fi

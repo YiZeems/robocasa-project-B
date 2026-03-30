@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Local wrapper: evaluate a checkpoint with consistent activation/runtime settings.
 set -euo pipefail
 
 CHECKPOINT_PATH="${1:-}"

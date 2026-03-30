@@ -1,3 +1,5 @@
+"""Evaluation entrypoint for trained PPO checkpoints on RoboCasa."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +16,8 @@ from ..utils.success import infer_success
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for evaluation."""
+
     parser = argparse.ArgumentParser(description="Evaluate PPO checkpoint on RoboCasa")
     parser.add_argument("--config", required=True, help="Path to train YAML config")
     parser.add_argument("--checkpoint", required=True, help="Path to .zip checkpoint")
@@ -25,6 +29,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Evaluate a PPO checkpoint and export aggregate metrics."""
+
     args = parse_args()
 
     cfg = load_yaml(args.config)
@@ -39,6 +45,7 @@ def main() -> None:
     successes = []
 
     for ep in range(int(args.num_episodes)):
+        # Offset seed by episode index to avoid replaying the exact same reset.
         obs, _ = env.reset(seed=args.seed + ep)
         done = False
         ep_ret = 0.0

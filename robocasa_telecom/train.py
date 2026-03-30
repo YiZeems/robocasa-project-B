@@ -1,3 +1,5 @@
+"""CLI wrapper for training entrypoint."""
+
 from .rl.train import main
 
 
