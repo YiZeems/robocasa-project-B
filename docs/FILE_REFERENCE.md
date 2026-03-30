@@ -197,5 +197,14 @@ Ce document décrit, pour chaque fichier versionné du projet, son rôle, les m�
 ### `docs/COLLABORATION.md`
 - Rôle: modèle de collaboration Git en équipe de 4.
 
+### `docs/PACKAGES.md`
+- Rôle: inventaire des packages installés et packages utilisés avec explication de leur rôle.
+
 ### `docs/FILE_REFERENCE.md`
 - Rôle: index technique détaillé fichier par fichier (ce document).
+
+### `docs/packages/conda_list_export_2026-03-30.txt`
+- Rôle: export exhaustif de l'environnement Conda (versions exactes, packages installés).
+
+### `docs/packages/pip_freeze_2026-03-30.txt`
+- Rôle: export exhaustif `pip freeze` de l'environnement projet.
