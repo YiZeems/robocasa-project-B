@@ -5,12 +5,15 @@ from pathlib import Path
 from typing import Any
 
 import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
+from gymnasium.spaces import utils as space_utils
 
 import robocasa  # noqa: F401  # Register RoboCasa tasks in robosuite.
 import robosuite
 from robosuite.controllers import (
     load_composite_controller_config,
-    load_controller_config,
+    load_part_controller_config,
 )
 from robosuite.wrappers.gym_wrapper import GymWrapper
 
@@ -19,7 +22,7 @@ from .config_utils import load_yaml
 
 @dataclass
 class EnvConfig:
-    task: str = "OpenSingleDoor"
+    task: str = "OpenCabinet"
     robots: str = "PandaOmron"
     controller: str | None = None
     horizon: int = 400
@@ -34,8 +37,8 @@ class EnvConfig:
     camera_height: int = 128
     camera_width: int = 128
     ignore_done: bool = False
-    hard_reset: bool = True
-    use_gym_wrapper: bool = True
+    obj_registries: tuple[str, ...] = ("objaverse",)
+    use_gym_wrapper: bool = False
 
 
 class GymnasiumAdapter(gym.Env):
@@ -96,7 +99,7 @@ class GymnasiumAdapter(gym.Env):
 
 
 class RawRoboCasaAdapter(gym.Env):
-    """Fallback adapter if GymWrapper is disabled."""
+    """Raw robocasa adapter with dict-observation flattening for SB3 compatibility."""
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
@@ -106,21 +109,64 @@ class RawRoboCasaAdapter(gym.Env):
         self._horizon = int(horizon)
         self._episode_steps = 0
 
-        low, high = self.raw_env.action_spec
-        self.action_space = gym.spaces.Box(low=low, high=high, dtype=float)
-
         first_obs = self.raw_env.reset()
         if isinstance(first_obs, tuple):
             first_obs = first_obs[0]
-        obs_shape = getattr(first_obs, "shape", None)
-        if obs_shape is None:
-            raise RuntimeError("Raw obs is not array-like; enable use_gym_wrapper=true")
-        self.observation_space = gym.spaces.Box(
-            low=-float("inf"),
-            high=float("inf"),
-            shape=obs_shape,
-            dtype=float,
+
+        low, high = self.raw_env.action_spec
+        self.action_space = spaces.Box(
+            low=np.asarray(low, dtype=np.float32),
+            high=np.asarray(high, dtype=np.float32),
+            dtype=np.float32,
         )
+
+        self._obs_keys, self._dict_space = self._build_dict_space(first_obs)
+        self.observation_space = space_utils.flatten_space(self._dict_space)
+
+    @staticmethod
+    def _select_obs(obs: Any) -> dict[str, np.ndarray]:
+        if isinstance(obs, dict):
+            selected: dict[str, np.ndarray] = {}
+            for key, value in obs.items():
+                arr = np.asarray(value, dtype=np.float32)
+                if arr.size == 0:
+                    continue
+                selected[str(key)] = arr
+            if selected:
+                return selected
+
+        arr = np.asarray(obs, dtype=np.float32)
+        if arr.ndim == 0:
+            arr = arr.reshape(1)
+        return {"obs": arr}
+
+    def _build_dict_space(self, obs: Any):
+        selected = self._select_obs(obs)
+        ordered_keys = tuple(sorted(selected.keys()))
+        dict_space = spaces.Dict(
+            {
+                key: spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=np.asarray(selected[key]).shape,
+                    dtype=np.float32,
+                )
+                for key in ordered_keys
+            }
+        )
+        return ordered_keys, dict_space
+
+    def _flatten_obs(self, obs: Any) -> np.ndarray:
+        selected = self._select_obs(obs)
+        aligned = {
+            key: np.asarray(
+                selected.get(key, np.zeros(self._dict_space[key].shape)),
+                dtype=np.float32,
+            )
+            for key in self._obs_keys
+        }
+        flat = space_utils.flatten(self._dict_space, aligned)
+        return np.asarray(flat, dtype=np.float32)
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         del options
@@ -130,15 +176,16 @@ class RawRoboCasaAdapter(gym.Env):
         except TypeError:
             out = self.raw_env.reset()
         if isinstance(out, tuple) and len(out) == 2:
-            return out
-        return out, {}
+            obs, info = out
+            return self._flatten_obs(obs), info
+        return self._flatten_obs(out), {}
 
     def step(self, action):
         obs, reward, done, info = self.raw_env.step(action)
         self._episode_steps += 1
         terminated = bool(done)
         truncated = self._episode_steps >= self._horizon and not terminated
-        return obs, float(reward), terminated, truncated, dict(info or {})
+        return self._flatten_obs(obs), float(reward), terminated, truncated, dict(info or {})
 
     def render(self):
         return self.raw_env.render()
@@ -149,28 +196,32 @@ class RawRoboCasaAdapter(gym.Env):
 
 def _resolve_controller_config(env_cfg: EnvConfig):
     if env_cfg.controller is None:
-        try:
-            return load_composite_controller_config(controller=None, robot=env_cfg.robots)
-        except Exception:
-            return load_controller_config(default_controller="OSC_POSE")
+        return load_composite_controller_config(controller=None, robot=env_cfg.robots)
 
     try:
-        return load_controller_config(default_controller=env_cfg.controller)
+        return load_composite_controller_config(
+            controller=env_cfg.controller,
+            robot=env_cfg.robots,
+        )
     except Exception:
-        return load_composite_controller_config(controller=env_cfg.controller, robot=env_cfg.robots)
+        try:
+            return load_part_controller_config(default_controller=env_cfg.controller)
+        except Exception:
+            return load_composite_controller_config(controller=None, robot=env_cfg.robots)
 
 
 def load_env_config(path: str | Path) -> EnvConfig:
     data = load_yaml(path)
     env_data = data.get("env", data)
     camera_names = tuple(env_data.get("camera_names", ["robot0_agentview_center"]))
+    obj_registries = tuple(env_data.get("obj_registries", ["objaverse"]))
 
     controller_value = env_data.get("controller", None)
     if isinstance(controller_value, str) and controller_value.lower() in {"none", "null", ""}:
         controller_value = None
 
     return EnvConfig(
-        task=env_data.get("task", "OpenSingleDoor"),
+        task=env_data.get("task", "OpenCabinet"),
         robots=env_data.get("robots", "PandaOmron"),
         controller=controller_value,
         horizon=int(env_data.get("horizon", 400)),
@@ -185,39 +236,60 @@ def load_env_config(path: str | Path) -> EnvConfig:
         camera_height=int(env_data.get("camera_height", 128)),
         camera_width=int(env_data.get("camera_width", 128)),
         ignore_done=bool(env_data.get("ignore_done", False)),
-        hard_reset=bool(env_data.get("hard_reset", True)),
-        use_gym_wrapper=bool(env_data.get("use_gym_wrapper", True)),
+        obj_registries=obj_registries,
+        use_gym_wrapper=bool(env_data.get("use_gym_wrapper", False)),
     )
 
 
 def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
     controller_cfg = _resolve_controller_config(env_cfg)
+    task_name = env_cfg.task
+    task_aliases = {
+        # Kept for compatibility with course notes / older naming.
+        "OpenSingleDoor": "OpenCabinet",
+        "OpenDoor": "OpenCabinet",
+    }
+    task_name = task_aliases.get(task_name, task_name)
 
-    raw_env = robosuite.make(
-        env_name=env_cfg.task,
-        robots=env_cfg.robots,
-        controller_configs=controller_cfg,
-        horizon=env_cfg.horizon,
-        control_freq=env_cfg.control_freq,
-        reward_shaping=env_cfg.reward_shaping,
-        use_object_obs=env_cfg.use_object_obs,
-        use_camera_obs=env_cfg.use_camera_obs,
-        has_renderer=env_cfg.has_renderer,
-        has_offscreen_renderer=env_cfg.has_offscreen_renderer,
-        render_camera=env_cfg.render_camera,
-        camera_names=list(env_cfg.camera_names),
-        camera_heights=env_cfg.camera_height,
-        camera_widths=env_cfg.camera_width,
-        ignore_done=env_cfg.ignore_done,
-        hard_reset=env_cfg.hard_reset,
-    )
+    try:
+        raw_env = robosuite.make(
+            env_name=task_name,
+            robots=env_cfg.robots,
+            controller_configs=controller_cfg,
+            horizon=env_cfg.horizon,
+            control_freq=env_cfg.control_freq,
+            reward_shaping=env_cfg.reward_shaping,
+            use_object_obs=env_cfg.use_object_obs,
+            use_camera_obs=env_cfg.use_camera_obs,
+            has_renderer=env_cfg.has_renderer,
+            has_offscreen_renderer=env_cfg.has_offscreen_renderer,
+            render_camera=env_cfg.render_camera,
+            camera_names=list(env_cfg.camera_names),
+            camera_heights=env_cfg.camera_height,
+            camera_widths=env_cfg.camera_width,
+            ignore_done=env_cfg.ignore_done,
+            obj_registries=env_cfg.obj_registries,
+        )
 
-    if env_cfg.use_gym_wrapper:
-        # keys=None follows RoboCasa workaround shown in the provided guide.
-        gym_env = GymWrapper(raw_env, keys=None)
-        env = GymnasiumAdapter(gym_env=gym_env, raw_env=raw_env, horizon=env_cfg.horizon)
-    else:
-        env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
+        if env_cfg.use_gym_wrapper:
+            try:
+                # keys=None follows RoboCasa workaround shown in the provided guide.
+                gym_env = GymWrapper(raw_env, keys=None)
+                env = GymnasiumAdapter(
+                    gym_env=gym_env,
+                    raw_env=raw_env,
+                    horizon=env_cfg.horizon,
+                )
+            except Exception:
+                # Fallback to raw adapter if GymWrapper is unstable for a given task/version combo.
+                env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
+        else:
+            env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "RoboCasa assets are missing. Run setup with DOWNLOAD_ASSETS=1 "
+            "or execute: python -m robocasa.scripts.download_kitchen_assets --type all"
+        ) from exc
 
     if seed is not None:
         env.reset(seed=seed)
