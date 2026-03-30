@@ -1,3 +1,5 @@
+"""Lightweight runtime sanity check for RoboCasa environment creation."""
+
 from __future__ import annotations
 
 import argparse
@@ -6,6 +8,8 @@ from ..envs.factory import load_env_config, make_env_from_config
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for sanity check execution."""
+
     parser = argparse.ArgumentParser(description="Quick sanity check for RoboCasa environment")
     parser.add_argument("--config", required=True, help="Path to env YAML config")
     parser.add_argument("--steps", type=int, default=20, help="Number of random steps")
@@ -14,6 +18,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Run reset + random steps to validate install/runtime pipeline."""
+
     args = parse_args()
     env_cfg = load_env_config(args.config)
     env = make_env_from_config(env_cfg, seed=args.seed)
@@ -26,8 +32,11 @@ def main() -> None:
         action = env.action_space.sample()
         obs, reward, terminated, truncated, _info = env.step(action)
         total_reward += reward
+
+        # Continue until requested number of steps even if an episode ends.
         if terminated or truncated:
             obs, _ = env.reset(seed=args.seed)
+
         if step % 5 == 0:
             print(f"step={step} reward={reward:.4f} cum_reward={total_reward:.4f}")
 

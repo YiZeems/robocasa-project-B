@@ -8,6 +8,7 @@
 #SBATCH --output=logs/slurm/%x-%A.out
 #SBATCH --error=logs/slurm/%x-%A.err
 
+# SLURM evaluation job for a provided checkpoint path.
 set -euo pipefail
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"

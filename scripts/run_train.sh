@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Local wrapper: run training with the same env activation logic as SLURM jobs.
 set -euo pipefail
 
 CONFIG_PATH="${1:-configs/train/open_single_door_ppo.yaml}"
