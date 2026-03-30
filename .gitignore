@@ -18,3 +18,5 @@ external/
 
 # OS
 .DS_Store
+
+*.egg-info/

@@ -58,6 +58,8 @@ git -C external/robocasa checkout "${ROBOCASA_COMMIT}"
 python -m pip install -e external/robosuite
 python -m pip install -e external/robocasa
 python -m pip install -r requirements-project.txt
+# Install this repository package so `python -m robocasa_telecom.*` works from any cwd.
+python -m pip install -e .
 
 # RoboCasa setup scripts can be interactive; `yes y` keeps CI/cluster non-interactive.
 if [ "${RUN_SETUP_MACROS}" = "1" ]; then

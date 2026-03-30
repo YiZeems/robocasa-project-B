@@ -47,6 +47,12 @@ bash scripts/setup_conda.sh
 conda activate robocasa_telecom
 ```
 
+Si vous voyez `ModuleNotFoundError: No module named 'robocasa_telecom'`, réinstallez le package projet:
+
+```bash
+python -m pip install -e .
+```
+
 Installation figée (recommandée projet):
 
 ```bash
