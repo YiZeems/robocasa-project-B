@@ -12,6 +12,7 @@ set -euo pipefail
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs/slurm outputs/eval
+REPO_ROOT="$(pwd)"
 
 ENV_NAME="${ENV_NAME:-robocasa_telecom}"
 CONFIG_PATH="${CONFIG_PATH:-configs/train/open_single_door_ppo.yaml}"
@@ -29,7 +30,7 @@ CONDA_BASE="$(conda info --base)"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 conda activate "${ENV_NAME}"
 
-PYTHONPATH=src python -m robocasa_telecom.evaluate \
+PYTHONPATH="${REPO_ROOT}" python -m robocasa_telecom.evaluate \
   --config "${CONFIG_PATH}" \
   --checkpoint "${CHECKPOINT_PATH}" \
   --num-episodes "${NUM_EPISODES}" \

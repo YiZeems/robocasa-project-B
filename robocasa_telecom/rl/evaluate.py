@@ -8,9 +8,9 @@ from pathlib import Path
 import numpy as np
 from stable_baselines3 import PPO
 
-from .config_utils import ensure_dir, load_yaml
-from .env_factory import load_env_config, make_env_from_config
-from .success_utils import infer_success
+from ..envs.factory import load_env_config, make_env_from_config
+from ..utils.io import ensure_dir, load_yaml
+from ..utils.success import infer_success
 
 
 def parse_args() -> argparse.Namespace:
