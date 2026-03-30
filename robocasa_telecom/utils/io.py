@@ -8,10 +8,27 @@ from typing import Any
 import yaml
 
 
+def _resolve_existing_path(path: str | Path) -> Path:
+    """Resolve config path from cwd, then fallback to repository root."""
+
+    candidate = Path(path).expanduser()
+    if candidate.exists():
+        return candidate
+
+    if not candidate.is_absolute():
+        # `utils/io.py` -> `robocasa_telecom/utils` -> repo root.
+        repo_root = Path(__file__).resolve().parents[2]
+        repo_relative = repo_root / candidate
+        if repo_relative.exists():
+            return repo_relative
+
+    raise FileNotFoundError(f"Path not found: {candidate}")
+
+
 def load_yaml(path: str | Path) -> dict[str, Any]:
     """Load YAML file and enforce mapping-like root object."""
 
-    path = Path(path)
+    path = _resolve_existing_path(path)
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
     if not isinstance(data, dict):

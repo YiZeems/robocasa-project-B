@@ -20,6 +20,10 @@ Ce document décrit, pour chaque fichier versionné du projet, son rôle, les m�
 - Méthode: pins ou bornes de versions pour limiter les conflits.
 - Entrée: consommé par `pip install -r`.
 
+### `setup.py`
+- Rôle: rendre le package `robocasa_telecom` installable (`pip install -e .`).
+- Méthode: metadata setuptools minimale pour installation editable.
+
 ### `README.md`
 - Rôle: point d'entrée utilisateur (installation, exécution, structure, docs).
 - Méthode: documentation opérationnelle concise.

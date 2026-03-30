@@ -153,6 +153,18 @@ Le code mappe automatiquement:
 - `OpenSingleDoor` -> `OpenCabinet`
 - `OpenDoor` -> `OpenCabinet`
 
+## Erreur `ModuleNotFoundError: No module named 'robocasa_telecom'`
+
+Cause typique:
+- package projet non installé dans l'environnement Conda actif.
+
+Correction:
+
+```bash
+conda activate robocasa_telecom
+python -m pip install -e .
+```
+
 ## Erreur checkpoint introuvable en eval
 
 Vérifier:

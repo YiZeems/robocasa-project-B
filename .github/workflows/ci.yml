@@ -64,7 +64,7 @@ jobs:
         shell: bash -l {0}
         run: |
           set +e
-          output=$(conda run -n robocasa_ci env PYTHONPATH=. python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 2 2>&1)
+          output=$(cd /tmp && conda run -n robocasa_ci python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 2 2>&1)
           status=$?
           set -e
 
