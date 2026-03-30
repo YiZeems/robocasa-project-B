@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from .env_factory import load_env_config, make_env_from_config
+from ..envs.factory import load_env_config, make_env_from_config
 
 
 def parse_args() -> argparse.Namespace:

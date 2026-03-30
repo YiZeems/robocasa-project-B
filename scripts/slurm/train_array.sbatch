@@ -13,6 +13,7 @@ set -euo pipefail
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs/slurm
+REPO_ROOT="$(pwd)"
 
 ENV_NAME="${ENV_NAME:-robocasa_telecom}"
 CONFIG_PATH="${CONFIG_PATH:-configs/train/open_single_door_ppo.yaml}"
@@ -34,4 +35,4 @@ fi
 SEED="${SEEDS[$IDX]}"
 echo "Running seed ${SEED} (array index ${IDX})"
 
-PYTHONPATH=src python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"
+PYTHONPATH="${REPO_ROOT}" python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"

@@ -9,15 +9,7 @@ import numpy as np
 from gymnasium import spaces
 from gymnasium.spaces import utils as space_utils
 
-import robocasa  # noqa: F401  # Register RoboCasa tasks in robosuite.
-import robosuite
-from robosuite.controllers import (
-    load_composite_controller_config,
-    load_part_controller_config,
-)
-from robosuite.wrappers.gym_wrapper import GymWrapper
-
-from .config_utils import load_yaml
+from ..utils.io import load_yaml
 
 
 @dataclass
@@ -195,6 +187,11 @@ class RawRoboCasaAdapter(gym.Env):
 
 
 def _resolve_controller_config(env_cfg: EnvConfig):
+    from robosuite.controllers import (
+        load_composite_controller_config,
+        load_part_controller_config,
+    )
+
     if env_cfg.controller is None:
         return load_composite_controller_config(controller=None, robot=env_cfg.robots)
 
@@ -242,6 +239,10 @@ def load_env_config(path: str | Path) -> EnvConfig:
 
 
 def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
+    import robocasa  # noqa: F401  # Register RoboCasa tasks in robosuite.
+    import robosuite
+    from robosuite.wrappers.gym_wrapper import GymWrapper
+
     controller_cfg = _resolve_controller_config(env_cfg)
     task_name = env_cfg.task
     task_aliases = {
