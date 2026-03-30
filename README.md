@@ -3,10 +3,10 @@
 Squelette exécutable pour le projet RoboCasa avec:
 - Python 3.11
 - conda + pip
-- tâche atomique `OpenSingleDoor`
+- tâche atomique `OpenCabinet` (alias `OpenSingleDoor` / `OpenDoor` acceptés dans le code)
 - pipeline `train / eval / sanity`
 - jobs batch SLURM (GPU) pour cluster Telecom
-- intégration des bonnes pratiques du guide `RoboCasa_Code_Aide.zip` (`GymWrapper(keys=None)`, contrôleur composite, visualisation)
+- intégration des bonnes pratiques du guide `RoboCasa_Code_Aide.zip` (contrôleur composite, visualisation, et fallback robuste sans `GymWrapper` si instable)
 
 ## 1) Prérequis
 
@@ -31,12 +31,18 @@ Variables utiles pour setup:
 ENV_NAME=robocasa_telecom \
 ROBOCASA_COMMIT=9a3a78680443734786c9784ab661413edb87067b \
 ROBOSUITE_COMMIT=aaa8b9b214ce8e77e82926d677b4d61d55e577ab \
-DOWNLOAD_ASSETS=0 \
+DOWNLOAD_ASSETS=1 \
 DOWNLOAD_DATASETS=0 \
 bash scripts/setup_conda.sh
 ```
 
-Pour forcer le téléchargement assets/datasets:
+Pour ignorer temporairement les assets (non recommandé pour exécution env):
+
+```bash
+DOWNLOAD_ASSETS=0 DOWNLOAD_DATASETS=0 bash scripts/setup_conda.sh
+```
+
+Pour forcer assets + datasets:
 
 ```bash
 DOWNLOAD_ASSETS=1 DOWNLOAD_DATASETS=1 DATASET_TASK=OpenSingleDoor bash scripts/setup_conda.sh

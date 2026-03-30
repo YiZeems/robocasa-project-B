@@ -7,7 +7,7 @@ ROBOCASA_COMMIT="${ROBOCASA_COMMIT:-9a3a78680443734786c9784ab661413edb87067b}"
 ROBOSUITE_COMMIT="${ROBOSUITE_COMMIT:-aaa8b9b214ce8e77e82926d677b4d61d55e577ab}"
 
 RUN_SETUP_MACROS="${RUN_SETUP_MACROS:-1}"
-DOWNLOAD_ASSETS="${DOWNLOAD_ASSETS:-0}"
+DOWNLOAD_ASSETS="${DOWNLOAD_ASSETS:-1}"
 DOWNLOAD_DATASETS="${DOWNLOAD_DATASETS:-0}"
 DATASET_TASK="${DATASET_TASK:-OpenSingleDoor}"
 
@@ -58,6 +58,11 @@ fi
 
 if [ "${DOWNLOAD_DATASETS}" = "1" ]; then
   yes y | python -m robocasa.scripts.download_datasets --tasks "${DATASET_TASK}" --source human --split target --overwrite || true
+fi
+
+if [ "${DOWNLOAD_ASSETS}" != "1" ]; then
+  echo "WARNING: RoboCasa assets were not downloaded (DOWNLOAD_ASSETS=${DOWNLOAD_ASSETS})."
+  echo "Runtime env reset may fail with missing XML files."
 fi
 
 echo "Setup complete."

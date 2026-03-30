@@ -1,6 +1,6 @@
 project:
   name: robocasa_telecom
-  task: OpenSingleDoor
+  task: OpenCabinet
 
 paths:
   output_root: outputs
