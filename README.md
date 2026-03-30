@@ -119,6 +119,7 @@ Par run d'évaluation:
 - [Méthodes RL et choix techniques](docs/METHODS.md)
 - [Runbook local + cluster](docs/RUNBOOK.md)
 - [Organisation équipe de 4](docs/COLLABORATION.md)
+- [Packages installés/utilisés](docs/PACKAGES.md)
 - [Référence fichier par fichier](docs/FILE_REFERENCE.md)
 
 ## Compatibilité / points d'attention
