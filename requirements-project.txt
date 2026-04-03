@@ -7,3 +7,4 @@ tensorboard>=2.16,<2.19
 tqdm>=4.66
 matplotlib>=3.8,<4
 imageio>=2.34,<3
+robosuite_models==1.0.0

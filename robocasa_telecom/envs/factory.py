@@ -255,13 +255,18 @@ class RawRoboCasaAdapter(_GymEnvBase):
 def _resolve_controller_config(env_cfg: EnvConfig):
     """Resolve controller config with broad compatibility fallbacks."""
 
-    from robosuite.controllers import (
-        load_composite_controller_config,
-        load_part_controller_config,
-    )
+    from robosuite.controllers import load_composite_controller_config
+
+    try:
+        from robosuite.controllers import load_controller_config
+    except ImportError:
+        from robosuite.controllers import load_part_controller_config as load_controller_config
 
     if env_cfg.controller is None:
-        return load_composite_controller_config(controller=None, robot=env_cfg.robots)
+        try:
+            return load_composite_controller_config(controller=None, robot=env_cfg.robots)
+        except Exception:
+            return load_controller_config(default_controller="OSC_POSE")
 
     try:
         return load_composite_controller_config(
@@ -270,7 +275,7 @@ def _resolve_controller_config(env_cfg: EnvConfig):
         )
     except Exception:
         try:
-            return load_part_controller_config(default_controller=env_cfg.controller)
+            return load_controller_config(default_controller=env_cfg.controller)
         except Exception:
             # Last-resort fallback to default controller to avoid hard failure.
             return load_composite_controller_config(controller=None, robot=env_cfg.robots)
@@ -352,6 +357,8 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
 
         if env_cfg.use_gym_wrapper:
             try:
+                # Initialize once before wrapping so robot metadata is populated.
+                raw_env.reset()
                 # `keys=None` mirrors the known RoboCasa workaround from the provided guide.
                 gym_env = GymWrapper(raw_env, keys=None)
                 env = GymnasiumAdapter(

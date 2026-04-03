@@ -140,7 +140,14 @@ fi
 # Verify critical runtime imports in the target environment.
 python - <<'PY'
 import importlib
-required = ["robosuite", "robocasa", "gymnasium", "stable_baselines3"]
+required = [
+    "robocasa_telecom",
+    "robosuite",
+    "robosuite_models",
+    "robocasa",
+    "gymnasium",
+    "stable_baselines3",
+]
 missing = [name for name in required if importlib.util.find_spec(name) is None]
 if missing:
     raise SystemExit(f"ERROR: Missing required imports after setup: {missing}")

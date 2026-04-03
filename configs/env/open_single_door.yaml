@@ -2,12 +2,12 @@ env:
   task: OpenCabinet
   robots: PandaOmron
   controller: null
-  use_gym_wrapper: false
+  use_gym_wrapper: true
   horizon: 400
   control_freq: 20
 
   reward_shaping: true
-  use_object_obs: true
+  use_object_obs: false
   use_camera_obs: false
 
   has_renderer: false
