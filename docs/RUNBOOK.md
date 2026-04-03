@@ -35,6 +35,12 @@ Activation:
 conda activate robocasa_telecom
 ```
 
+Si `conda activate` échoue, exécutez via helper:
+
+```bash
+scripts/with_env.sh python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
+```
+
 ## 3) Validation rapide installation
 
 ```bash
@@ -91,7 +97,7 @@ Artefact attendu:
 ## 6) Visualisation environnement
 
 ```bash
-python scripts/visualize_env.py --config configs/env/open_single_door.yaml --steps 200
+scripts/with_env.sh python scripts/visualize_env.py --config configs/env/open_single_door.yaml --steps 200
 ```
 
 Usage:
@@ -163,6 +169,12 @@ Correction:
 ```bash
 conda activate robocasa_telecom
 python -m pip install -e .
+```
+
+Alternative sans activation:
+
+```bash
+scripts/with_env.sh python -m pip install -e .
 ```
 
 ## Erreur checkpoint introuvable en eval

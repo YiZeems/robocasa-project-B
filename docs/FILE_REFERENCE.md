@@ -160,6 +160,10 @@ Ce document décrit, pour chaque fichier versionné du projet, son rôle, les m�
 - Rôle: wrapper local homogène pour eval.
 - Méthode: validation checkpoint + activation conda + lancement module eval.
 
+### `scripts/with_env.sh`
+- Rôle: exécuter une commande dans l'environnement `robocasa_telecom` sans `conda activate`.
+- Méthode: détecte l'environnement, lance auto-setup si absent (optionnel), puis `conda run -n`.
+
 ### `scripts/visualize_env.py`
 - Rôle: smoke test visuel/offscreen multi-caméra.
 - Méthode: force `use_camera_obs` + random policy.

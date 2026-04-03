@@ -47,6 +47,12 @@ bash scripts/setup_conda.sh
 conda activate robocasa_telecom
 ```
 
+Si `conda activate` ne marche pas dans votre shell, utilisez directement:
+
+```bash
+scripts/with_env.sh python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
+```
+
 Si vous voyez `ModuleNotFoundError: No module named 'robocasa_telecom'`, réinstallez le package projet:
 
 ```bash
@@ -92,7 +98,7 @@ python -m robocasa_telecom.evaluate \
 Visualisation environnement:
 
 ```bash
-python scripts/visualize_env.py --config configs/env/open_single_door.yaml --steps 200
+scripts/with_env.sh python scripts/visualize_env.py --config configs/env/open_single_door.yaml --steps 200
 ```
 
 ## Exécution cluster SLURM

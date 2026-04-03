@@ -2,6 +2,11 @@
 # Bootstrap reproducible RoboCasa training environment (Conda + pinned repos).
 set -euo pipefail
 
+# Always execute from repository root (script is safe to call from any cwd).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${REPO_ROOT}"
+
 # Environment settings (overridable at invocation time).
 ENV_NAME="${ENV_NAME:-robocasa_telecom}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
@@ -20,16 +25,29 @@ if ! command -v conda >/dev/null 2>&1; then
   exit 1
 fi
 
+PYTHON_BIN="$(command -v python || command -v python3 || true)"
+if [ -z "${PYTHON_BIN}" ]; then
+  echo "Error: neither 'python' nor 'python3' is available in PATH."
+  exit 1
+fi
+
 CONDA_BASE="$(conda info --base)"
 # shellcheck source=/dev/null
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 
 # Create project env only if absent (idempotent script behavior).
-if ! conda env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
+if ! conda env list --json | "${PYTHON_BIN}" -c "import json,sys; d=json.load(sys.stdin); names={p.rstrip('/').split('/')[-1] for p in d.get('envs', [])}; sys.exit(0 if '${ENV_NAME}' in names else 1)"; then
   conda create -y -n "${ENV_NAME}" "python=${PYTHON_VERSION}" pip
 fi
 
 conda activate "${ENV_NAME}"
+
+# Adapt existing env if Python version does not match expected major.minor.
+CURRENT_PY_MM="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+if [ "${CURRENT_PY_MM}" != "${PYTHON_VERSION}" ]; then
+  conda install -y -n "${ENV_NAME}" "python=${PYTHON_VERSION}" pip
+  conda activate "${ENV_NAME}"
+fi
 
 # Upgrade packaging tools before editable installs.
 python -m pip install --upgrade pip setuptools wheel
@@ -119,5 +137,16 @@ if [ "${DOWNLOAD_ASSETS}" != "1" ]; then
   echo "Runtime env reset may fail with missing XML files."
 fi
 
+# Verify critical runtime imports in the target environment.
+python - <<'PY'
+import importlib
+required = ["robosuite", "robocasa", "gymnasium", "stable_baselines3"]
+missing = [name for name in required if importlib.util.find_spec(name) is None]
+if missing:
+    raise SystemExit(f"ERROR: Missing required imports after setup: {missing}")
+print("Import validation passed.")
+PY
+
 echo "Setup complete."
 echo "Activate with: conda activate ${ENV_NAME}"
+echo "Or run without activate: scripts/with_env.sh python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20"
