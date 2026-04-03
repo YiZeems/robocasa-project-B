@@ -9,8 +9,19 @@ cd "${REPO_ROOT}"
 ENV_NAME="${ENV_NAME:-robocasa_telecom}"
 AUTO_SETUP="${AUTO_SETUP:-1}"
 
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+case "${UNAME_S}" in
+  Linux*) OS_FAMILY="linux" ;;
+  Darwin*) OS_FAMILY="macos" ;;
+  MINGW*|MSYS*|CYGWIN*) OS_FAMILY="windows" ;;
+  *) OS_FAMILY="unknown" ;;
+esac
+
 if ! command -v conda >/dev/null 2>&1; then
   echo "Error: conda is not available in PATH."
+  if [ "${OS_FAMILY}" = "windows" ]; then
+    echo "Hint: run from Git Bash / Miniforge shell / WSL where conda is initialized."
+  fi
   exit 1
 fi
 
@@ -26,7 +37,7 @@ if [ "$#" -eq 0 ]; then
   exit 1
 fi
 
-if ! conda env list --json | "${PYTHON_BIN}" -c "import json,sys; d=json.load(sys.stdin); names={p.rstrip('/').split('/')[-1] for p in d.get('envs', [])}; sys.exit(0 if '${ENV_NAME}' in names else 1)"; then
+if ! conda env list --json | "${PYTHON_BIN}" -c "import json,sys; d=json.load(sys.stdin); names={p.replace('\\\\','/').rstrip('/').split('/')[-1] for p in d.get('envs', [])}; sys.exit(0 if '${ENV_NAME}' in names else 1)"; then
   if [ "${AUTO_SETUP}" = "1" ]; then
     echo "Conda env '${ENV_NAME}' not found. Running setup..."
     ENV_NAME="${ENV_NAME}" DOWNLOAD_ASSETS="${DOWNLOAD_ASSETS:-0}" VERIFY_ASSETS="${VERIFY_ASSETS:-0}" RUN_SETUP_MACROS="${RUN_SETUP_MACROS:-0}" DOWNLOAD_DATASETS="${DOWNLOAD_DATASETS:-0}" bash scripts/setup_conda.sh

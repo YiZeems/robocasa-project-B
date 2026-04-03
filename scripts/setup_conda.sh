@@ -20,6 +20,19 @@ DOWNLOAD_DATASETS="${DOWNLOAD_DATASETS:-0}"
 DATASET_TASK="${DATASET_TASK:-OpenSingleDoor}"
 VERIFY_ASSETS="${VERIFY_ASSETS:-1}"
 
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+case "${UNAME_S}" in
+  Linux*) OS_FAMILY="linux" ;;
+  Darwin*) OS_FAMILY="macos" ;;
+  MINGW*|MSYS*|CYGWIN*) OS_FAMILY="windows" ;;
+  *) OS_FAMILY="unknown" ;;
+esac
+
+echo "Detected OS: ${OS_FAMILY} (${UNAME_S})"
+if [ "${OS_FAMILY}" = "windows" ]; then
+  echo "Info: use Git Bash or WSL for this script (not plain cmd.exe)."
+fi
+
 if ! command -v conda >/dev/null 2>&1; then
   echo "Error: conda is not available in PATH."
   exit 1
@@ -36,7 +49,7 @@ CONDA_BASE="$(conda info --base)"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 
 # Create project env only if absent (idempotent script behavior).
-if ! conda env list --json | "${PYTHON_BIN}" -c "import json,sys; d=json.load(sys.stdin); names={p.rstrip('/').split('/')[-1] for p in d.get('envs', [])}; sys.exit(0 if '${ENV_NAME}' in names else 1)"; then
+if ! conda env list --json | "${PYTHON_BIN}" -c "import json,sys; d=json.load(sys.stdin); names={p.replace('\\\\','/').rstrip('/').split('/')[-1] for p in d.get('envs', [])}; sys.exit(0 if '${ENV_NAME}' in names else 1)"; then
   conda create -y -n "${ENV_NAME}" "python=${PYTHON_VERSION}" pip
 fi
 
