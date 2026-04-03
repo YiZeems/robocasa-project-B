@@ -27,5 +27,11 @@ def main() -> None:
     print("config_loading_ok")
 
 
+def test_config_loading() -> None:
+    """Pytest entrypoint for config loading smoke test."""
+
+    main()
+
+
 if __name__ == "__main__":
     main()
