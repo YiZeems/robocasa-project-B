@@ -42,10 +42,30 @@ Squelette exécutable pour entraîner et évaluer un agent RL sur RoboCasa, cons
 
 ## Installation
 
+### 1) Pré-requis système
+
+- Conda installé (Anaconda ou Miniforge)
+- Git disponible dans le shell
+- Espace disque suffisant pour les assets RoboCasa (plusieurs Go)
+
+### 2) Setup complet (recommandé)
+
 ```bash
 bash scripts/setup_conda.sh
 conda activate robocasa_telecom
 ```
+
+Ce que fait `scripts/setup_conda.sh`:
+- crée (ou réutilise) l'environnement Conda `robocasa_telecom` en Python `3.11`;
+- clone `external/robosuite` et `external/robocasa` si nécessaire;
+- checkout les commits figés du projet;
+- installe en editable:
+  - `external/robosuite`
+  - `external/robocasa`
+  - `.` (le package `robocasa_telecom`);
+- installe les dépendances de [requirements-project.txt](/Users/yimouzhang/Documents/Telecom_Paris/Mastere_Specialise/Intelligence_Artificielle_Multimodale/IA705_Apprentissage_pour_la_robotique/projet/robocasa-project-B/requirements-project.txt) (PPO, Gymnasium, TensorBoard, etc.);
+- lance la validation d'imports critiques (`robosuite`, `robocasa`, `robocasa_telecom`, `stable_baselines3`, ...);
+- optionnellement télécharge/valide les assets RoboCasa.
 
 Si `conda activate` ne marche pas dans votre shell, utilisez directement:
 
@@ -69,6 +89,13 @@ DOWNLOAD_ASSETS=1 \
 VERIFY_ASSETS=1 \
 DOWNLOAD_DATASETS=0 \
 bash scripts/setup_conda.sh
+```
+
+### 3) Vérification rapide post-install
+
+```bash
+python -m pip check
+python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
 ```
 
 ## Commandes principales
@@ -100,6 +127,52 @@ Visualisation environnement:
 ```bash
 scripts/with_env.sh python scripts/visualize_env.py --config configs/env/open_single_door.yaml --steps 200
 ```
+
+## Tests et validation de fonctionnement
+
+### Test A: test Python minimal du projet
+
+```bash
+pytest -q
+```
+
+Ce test vérifie notamment le chargement de config et évite de collecter les tests `external/*`.
+
+### Test B: sanity simulation (import + reset + step)
+
+```bash
+python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
+```
+
+Attendu: fin avec `Sanity check completed successfully.`
+
+### Test C: entraînement court de validation
+
+```bash
+python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_ppo.yaml \
+  --seed 0 \
+  --total-timesteps 256
+```
+
+Attendu:
+- création d'un dossier `checkpoints/<run_id>/` avec `final_model.zip`;
+- création d'un dossier `outputs/<run_id>/` avec `monitor.csv`, `training_curve.csv`, `train_summary.json`.
+- note: avec PPO SB3, un run peut effectuer au minimum `n_steps` transitions (par défaut `2048`) même si `--total-timesteps` est plus petit.
+
+### Test D: évaluation du checkpoint
+
+```bash
+python -m robocasa_telecom.evaluate \
+  --config configs/train/open_single_door_ppo.yaml \
+  --checkpoint checkpoints/<run_id>/final_model.zip \
+  --num-episodes 2 \
+  --deterministic
+```
+
+Attendu:
+- affichage des métriques (`return_mean`, `success_rate`);
+- fichier `outputs/eval/eval_YYYYmmdd_HHMMSS.json`.
 
 ## Exécution cluster SLURM
 
@@ -142,3 +215,7 @@ Par run d'évaluation:
 - Certaines installations RoboCasa nécessitent le téléchargement des assets kitchen, sinon `reset()` échoue.
 - Le script `scripts/setup_conda.sh` échoue explicitement si `DOWNLOAD_ASSETS=1` mais que les assets critiques ne sont pas présents.
 - Le code convertit explicitement les observations pour rester compatible Gymnasium + SB3 selon la version de wrappers disponible.
+- Warnings possibles non bloquants:
+  - `mimicgen environments not imported` (optionnel pour ce projet);
+  - warning IK `mink` côté robosuite (ne bloque pas le pipeline PPO utilisé ici);
+  - message de dépréciation `gym` affiché par des dépendances tierces.
