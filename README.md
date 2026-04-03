@@ -63,6 +63,42 @@ Squelette exécutable pour entraîner et évaluer un agent RL sur RoboCasa, cons
   - Linux recommandé (local/cluster)
   - macOS possible pour tests locaux, mais moins adapté pour entraînement long
 
+### Répartition du stockage (où part l'espace disque)
+
+Les principaux consommateurs de disque dans ce projet sont:
+
+- `external/robocasa/robocasa/models/assets/`:
+  - plus grosse source de stockage (assets kitchen: objets + fixtures + textures);
+  - typiquement plusieurs Go (souvent `~10-20+ Go` selon les packs téléchargés).
+- `external/robosuite/` + `external/robocasa/` (code source git):
+  - taille modérée (code + historique + metadata git);
+  - typiquement `~1-3 Go` cumulés.
+- `checkpoints/`:
+  - modèles sauvegardés pendant/après entraînement;
+  - grandit avec le nombre de runs et la fréquence de sauvegarde.
+- `outputs/`:
+  - courbes CSV, résumés JSON, métriques eval;
+  - taille faible à modérée.
+- `logs/` (notamment TensorBoard):
+  - peut grossir vite sur des runs longs/multiples.
+- environnement Conda `robocasa_telecom`:
+  - hors dépôt, mais à compter dans le stockage global machine;
+  - peut prendre plusieurs Go selon les dépendances compilées/binaries.
+
+Commandes utiles pour auditer l'espace utilisé (depuis la racine du repo):
+
+```bash
+du -sh external checkpoints outputs logs 2>/dev/null
+du -h -d 2 external/robocasa/robocasa/models/assets 2>/dev/null | sort -h | tail -n 20
+```
+
+Pour libérer de l'espace:
+
+- supprimer les anciens runs dans `checkpoints/` et `outputs/`;
+- nettoyer les logs TensorBoard anciens dans `logs/`;
+- éviter de télécharger des datasets non utilisés (`DOWNLOAD_DATASETS=0`);
+- conserver un seul env Conda projet actif si possible.
+
 ### 2) Setup complet (recommandé)
 
 ```bash
