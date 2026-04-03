@@ -48,6 +48,21 @@ Squelette exécutable pour entraîner et évaluer un agent RL sur RoboCasa, cons
 - Git disponible dans le shell
 - Espace disque suffisant pour les assets RoboCasa (plusieurs Go)
 
+### Ressources minimales (machine)
+
+- Stockage disque:
+  - minimum: `25 Go` libres
+  - recommandé: `40+ Go` libres (assets + checkpoints + logs + marge)
+- RAM:
+  - minimum: `16 Go`
+  - recommandé: `32 Go`
+- Calcul:
+  - minimum fonctionnel: CPU moderne (le pipeline tourne, mais lent)
+  - recommandé: GPU NVIDIA `8 Go VRAM` ou plus pour accélérer train/eval (SLURM `--gres=gpu:1`)
+- OS cible:
+  - Linux recommandé (local/cluster)
+  - macOS possible pour tests locaux, mais moins adapté pour entraînement long
+
 ### 2) Setup complet (recommandé)
 
 ```bash
@@ -166,6 +181,16 @@ Attendu:
 python -m robocasa_telecom.evaluate \
   --config configs/train/open_single_door_ppo.yaml \
   --checkpoint checkpoints/<run_id>/final_model.zip \
+  --num-episodes 2 \
+  --deterministic
+```
+
+Ou directement sur le dernier checkpoint généré:
+
+```bash
+python -m robocasa_telecom.evaluate \
+  --config configs/train/open_single_door_ppo.yaml \
+  --checkpoint "$(ls -t checkpoints/*/final_model.zip | head -n 1)" \
   --num-episodes 2 \
   --deterministic
 ```
