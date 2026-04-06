@@ -1,4 +1,8 @@
-"""Evaluation entrypoint for trained PPO checkpoints on RoboCasa."""
+"""Evaluation entrypoint for trained RL checkpoints on RoboCasa.
+
+Supports PPO, SAC, and A2C — the algorithm is read from the train YAML config
+(``train.algorithm``) so the same script works for all methods.
+"""
 
 from __future__ import annotations
 
@@ -8,17 +12,23 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from stable_baselines3 import PPO
+from stable_baselines3 import A2C, PPO, SAC
 
 from ..envs.factory import load_env_config, make_env_from_config
 from ..utils.io import ensure_dir, load_yaml
 from ..utils.success import infer_success
 
+ALGO_MAP = {
+    "PPO": PPO,
+    "SAC": SAC,
+    "A2C": A2C,
+}
+
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for evaluation."""
 
-    parser = argparse.ArgumentParser(description="Evaluate PPO checkpoint on RoboCasa")
+    parser = argparse.ArgumentParser(description="Evaluate RL checkpoint on RoboCasa")
     parser.add_argument("--config", required=True, help="Path to train YAML config")
     parser.add_argument("--checkpoint", required=True, help="Path to .zip checkpoint")
     parser.add_argument("--num-episodes", type=int, default=20, help="Evaluation episodes")
@@ -29,7 +39,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Evaluate a PPO checkpoint and export aggregate metrics."""
+    """Evaluate a checkpoint and export aggregate metrics."""
 
     args = parse_args()
 
@@ -38,8 +48,13 @@ def main() -> None:
     env_cfg = load_env_config(env_cfg_path)
     out_root = ensure_dir(Path(cfg.get("paths", {}).get("output_root", "outputs")) / "eval")
 
+    algorithm = cfg.get("train", {}).get("algorithm", "PPO").upper()
+    if algorithm not in ALGO_MAP:
+        raise ValueError(f"Unknown algorithm '{algorithm}'. Supported: {list(ALGO_MAP)}")
+
     env = make_env_from_config(env_cfg, seed=args.seed)
-    model = PPO.load(args.checkpoint, device=cfg.get("train", {}).get("device", "auto"))
+    algo_cls = ALGO_MAP[algorithm]
+    model = algo_cls.load(args.checkpoint, device=cfg.get("train", {}).get("device", "auto"))
 
     returns = []
     successes = []
@@ -63,6 +78,7 @@ def main() -> None:
 
     metrics = {
         "task": env_cfg.task,
+        "algorithm": algorithm,
         "checkpoint": str(Path(args.checkpoint).resolve()),
         "num_episodes": int(args.num_episodes),
         "return_mean": float(np.mean(returns)) if returns else 0.0,

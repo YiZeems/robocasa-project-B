@@ -324,6 +324,7 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
     import robocasa  # noqa: F401  # Register RoboCasa tasks in robosuite.
     import robosuite
     from robosuite.wrappers.gym_wrapper import GymWrapper
+    from .reward_shaping import RewardShapingWrapper
 
     controller_cfg = _resolve_controller_config(env_cfg)
     task_name = env_cfg.task
@@ -355,22 +356,25 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
             obj_registries=env_cfg.obj_registries,
         )
 
+        # Wrap raw env with shaped rewards before flattening observations.
+        # RoboCasa's built-in reward_shaping flag is unused in the current
+        # version; this wrapper provides the dense signal instead.
+        shaped_env = RewardShapingWrapper(raw_env)
+
         if env_cfg.use_gym_wrapper:
             try:
                 # Initialize once before wrapping so robot metadata is populated.
-                raw_env.reset()
-                # `keys=None` mirrors the known RoboCasa workaround from the provided guide.
-                gym_env = GymWrapper(raw_env, keys=None)
+                shaped_env.reset()
+                gym_env = GymWrapper(shaped_env, keys=None)
                 env = GymnasiumAdapter(
                     gym_env=gym_env,
                     raw_env=raw_env,
                     horizon=env_cfg.horizon,
                 )
             except Exception:
-                # Fallback to raw adapter if GymWrapper breaks on a version combination.
-                env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
+                env = RawRoboCasaAdapter(raw_env=shaped_env, horizon=env_cfg.horizon)
         else:
-            env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
+            env = RawRoboCasaAdapter(raw_env=shaped_env, horizon=env_cfg.horizon)
     except FileNotFoundError as exc:
         raise RuntimeError(
             "RoboCasa assets are missing. Run setup with DOWNLOAD_ASSETS=1 "

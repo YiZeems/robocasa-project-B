@@ -1,5 +1,6 @@
-"""PPO training entrypoint for RoboCasa tasks.
+"""RL training entrypoint for RoboCasa tasks.
 
+Supports PPO, SAC, and A2C via the ``algorithm`` key in the train YAML config.
 This module is intentionally self-contained so it can be called from local scripts,
 SLURM batch jobs, or direct `python -m` invocations with the same behavior.
 """
@@ -15,7 +16,7 @@ from typing import Any
 
 import numpy as np
 import yaml
-from stable_baselines3 import PPO
+from stable_baselines3 import A2C, PPO, SAC
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 
@@ -23,11 +24,18 @@ from ..envs.factory import load_env_config, make_env_from_config
 from ..utils.io import ensure_dir, load_yaml
 from ..utils.success import infer_success
 
+# Supported algorithms — extend here to add new ones.
+ALGO_MAP = {
+    "PPO": PPO,
+    "SAC": SAC,
+    "A2C": A2C,
+}
+
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for training."""
 
-    parser = argparse.ArgumentParser(description="Train PPO on RoboCasa task")
+    parser = argparse.ArgumentParser(description="Train RL agent on RoboCasa task")
     parser.add_argument("--config", required=True, help="Path to train YAML config")
     parser.add_argument("--seed", type=int, default=None, help="Override seed")
     parser.add_argument(
@@ -39,7 +47,59 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _evaluate_policy(model: PPO, env: Monitor, episodes: int) -> dict[str, float]:
+def _build_model(
+    algorithm: str,
+    train_cfg: dict[str, Any],
+    env: Monitor,
+    tensorboard_root: Path,
+    seed: int,
+) -> Any:
+    """Instantiate the right SB3 model based on ``algorithm``.
+
+    Each algorithm only receives the hyperparameters it understands — passing
+    PPO-specific keys (e.g. ``clip_range``) to SAC would raise an error.
+    """
+    algo_cls = ALGO_MAP[algorithm]
+    common = dict(
+        policy=train_cfg.get("policy", "MlpPolicy"),
+        env=env,
+        learning_rate=float(train_cfg.get("learning_rate", 3e-4)),
+        gamma=float(train_cfg.get("gamma", 0.99)),
+        tensorboard_log=str(tensorboard_root),
+        seed=seed,
+        device=train_cfg.get("device", "auto"),
+        verbose=1,
+    )
+
+    if algorithm in ("PPO", "A2C"):
+        common.update(
+            n_steps=int(train_cfg.get("n_steps", 2048)),
+            gae_lambda=float(train_cfg.get("gae_lambda", 0.95)),
+            ent_coef=float(train_cfg.get("ent_coef", 0.0)),
+            vf_coef=float(train_cfg.get("vf_coef", 0.5)),
+        )
+        if algorithm == "PPO":
+            common.update(
+                batch_size=int(train_cfg.get("batch_size", 256)),
+                clip_range=float(train_cfg.get("clip_range", 0.2)),
+                n_epochs=int(train_cfg.get("n_epochs", 10)),
+            )
+
+    elif algorithm == "SAC":
+        common.update(
+            buffer_size=int(train_cfg.get("buffer_size", 100000)),
+            batch_size=int(train_cfg.get("batch_size", 256)),
+            tau=float(train_cfg.get("tau", 0.005)),
+            ent_coef=train_cfg.get("ent_coef", "auto"),
+            train_freq=int(train_cfg.get("train_freq", 1)),
+            gradient_steps=int(train_cfg.get("gradient_steps", 1)),
+            learning_starts=int(train_cfg.get("learning_starts", 1000)),
+        )
+
+    return algo_cls(**common)
+
+
+def _evaluate_policy(model: Any, env: Monitor, episodes: int) -> dict[str, float]:
     """Run a quick deterministic evaluation after training completes."""
 
     returns = []
@@ -109,8 +169,11 @@ def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> dict[
         if args.total_timesteps is not None
         else train_cfg.get("total_timesteps", 200000)
     )
+    algorithm = train_cfg.get("algorithm", "PPO").upper()
+    if algorithm not in ALGO_MAP:
+        raise ValueError(f"Unknown algorithm '{algorithm}'. Supported: {list(ALGO_MAP)}")
 
-    run_id = f"{env_cfg.task}_seed{seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_id = f"{env_cfg.task}_{algorithm.lower()}_seed{seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     return {
         "env_cfg": env_cfg,
@@ -118,6 +181,7 @@ def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> dict[
         "paths_cfg": paths_cfg,
         "seed": seed,
         "total_timesteps": total_timesteps,
+        "algorithm": algorithm,
         "run_id": run_id,
     }
 
@@ -134,6 +198,7 @@ def main() -> None:
     paths_cfg = context["paths_cfg"]
     seed = int(context["seed"])
     total_timesteps = int(context["total_timesteps"])
+    algorithm = str(context["algorithm"])
     run_id = str(context["run_id"])
 
     output_root = ensure_dir(paths_cfg.get("output_root", "outputs"))
@@ -143,34 +208,17 @@ def main() -> None:
     run_output_dir = ensure_dir(output_root / run_id)
     run_checkpoint_dir = ensure_dir(checkpoint_root / run_id)
 
-    # Single environment setup for baseline PPO.
     env = make_env_from_config(env_cfg, seed=seed)
     monitor_path = run_output_dir / "monitor.csv"
     env = Monitor(env, filename=str(monitor_path))
 
-    # Model configuration is kept YAML-driven for fast experimentation.
-    model = PPO(
-        policy=train_cfg.get("policy", "MlpPolicy"),
-        env=env,
-        learning_rate=float(train_cfg.get("learning_rate", 3e-4)),
-        n_steps=int(train_cfg.get("n_steps", 2048)),
-        batch_size=int(train_cfg.get("batch_size", 256)),
-        gamma=float(train_cfg.get("gamma", 0.99)),
-        gae_lambda=float(train_cfg.get("gae_lambda", 0.95)),
-        clip_range=float(train_cfg.get("clip_range", 0.2)),
-        ent_coef=float(train_cfg.get("ent_coef", 0.0)),
-        vf_coef=float(train_cfg.get("vf_coef", 0.5)),
-        n_epochs=int(train_cfg.get("n_epochs", 10)),
-        tensorboard_log=str(tensorboard_root),
-        seed=seed,
-        device=train_cfg.get("device", "auto"),
-        verbose=1,
-    )
+    # Model is instantiated based on the ``algorithm`` key in the YAML config.
+    model = _build_model(algorithm, train_cfg, env, tensorboard_root, seed)
 
     checkpoint_cb = CheckpointCallback(
         save_freq=max(1, int(train_cfg.get("save_freq_steps", 50000))),
         save_path=str(run_checkpoint_dir),
-        name_prefix="ppo",
+        name_prefix=algorithm.lower(),
         save_replay_buffer=False,
         save_vecnormalize=False,
     )
@@ -189,6 +237,7 @@ def main() -> None:
 
     summary = {
         "run_id": run_id,
+        "algorithm": algorithm,
         "task": env_cfg.task,
         "seed": seed,
         "total_timesteps": total_timesteps,
