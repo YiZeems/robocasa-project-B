@@ -187,6 +187,78 @@ sbatch --export=ALL,CHECKPOINT_PATH=checkpoints/<run_id>/final_model.zip scripts
 - warning IK `mink` côté robosuite
 - message `gym` legacy affiché par dépendances tierces
 
+## Entraînement multi-algorithmes sur cluster SLURM (PPO / SAC / A2C)
+
+### Contexte
+
+La branche `feature/training-eval` ajoute le support de trois algorithmes (PPO, SAC, A2C) ainsi qu'un reward shaping dense basé sur la distance gripper→porte (le flag `reward_shaping` de RoboCasa étant non fonctionnel dans la version actuelle).
+
+### Étape 1 — Cloner et se placer sur la bonne branche
+
+```bash
+git clone https://github.com/YiZeems/robocasa-project-B.git
+cd robocasa-project-B
+git checkout feature/training-eval
+```
+
+### Étape 2 — Installer l'environnement (une seule fois par machine)
+
+```bash
+bash scripts/setup_conda.sh
+conda activate robocasa_telecom
+```
+
+Le script installe robosuite, robocasa, toutes les dépendances et télécharge les assets (~10-20 Go). Compter 30-60 min selon la connexion.
+
+### Étape 3 — Vérifier l'installation
+
+```bash
+python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
+```
+
+`Sanity check passed` → tout est opérationnel.
+
+### Étape 4 — Lancer les 3 entraînements en parallèle (500k steps)
+
+```bash
+# PPO
+sbatch --export=ALL,CONFIG_PATH=configs/train/open_single_door_ppo.yaml,SEEDS_CSV=0,TOTAL_TIMESTEPS=500000 \
+  scripts/slurm/train_array.sbatch
+
+# SAC
+sbatch --export=ALL,CONFIG_PATH=configs/train/open_single_door_sac.yaml,SEEDS_CSV=0,TOTAL_TIMESTEPS=500000 \
+  scripts/slurm/train_array.sbatch
+
+# A2C
+sbatch --export=ALL,CONFIG_PATH=configs/train/open_single_door_a2c.yaml,SEEDS_CSV=0,TOTAL_TIMESTEPS=500000 \
+  scripts/slurm/train_array.sbatch
+```
+
+### Étape 5 — Suivre la progression
+
+```bash
+squeue -u $USER
+tail -f logs/slurm/robocasa_train-<JOBID>_0.out
+```
+
+### Étape 6 — Comparer les résultats
+
+Une fois les 3 jobs terminés :
+
+```bash
+python scripts/compare_runs.py --csv results/comparison.csv
+```
+
+Pour partager les résultats via git (les `outputs/` sont exclus du `.gitignore`) :
+
+```bash
+git add -f outputs/OpenCabinet_ppo_seed0_*/train_summary.json
+git add -f outputs/OpenCabinet_sac_seed0_*/train_summary.json
+git add -f outputs/OpenCabinet_a2c_seed0_*/train_summary.json
+git commit -m "results: 500k training results PPO/SAC/A2C"
+git push origin feature/training-eval
+```
+
 ## Documentation détaillée
 
 - [Architecture détaillée](docs/ARCHITECTURE.md)
