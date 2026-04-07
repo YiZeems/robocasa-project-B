@@ -19,6 +19,7 @@ REPO_ROOT="$(pwd)"
 ENV_NAME="${ENV_NAME:-robocasa_telecom}"
 CONFIG_PATH="${CONFIG_PATH:-configs/train/open_single_door_ppo.yaml}"
 SEEDS_CSV="${SEEDS_CSV:-0,1,2}"
+TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-500000}"
 
 CONDA_BASE="$(conda info --base)"
 # shellcheck source=/dev/null
@@ -37,4 +38,7 @@ fi
 SEED="${SEEDS[$IDX]}"
 echo "Running seed ${SEED} (array index ${IDX})"
 
-python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"
+python -m robocasa_telecom.train \
+  --config "${CONFIG_PATH}" \
+  --seed "${SEED}" \
+  --total-timesteps "${TOTAL_TIMESTEPS}"
