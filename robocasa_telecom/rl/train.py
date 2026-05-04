@@ -26,8 +26,8 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 
 from ..envs.factory import EnvConfig, load_env_config, make_env_from_config
+from ..utils.metrics import prefixed_metrics, summarize_rollout_episodes
 from ..utils.io import ensure_dir, load_yaml
-from ..utils.success import infer_success
 
 
 SUPPORTED_ALGOS = {"PPO", "SAC"}
@@ -207,32 +207,15 @@ def _evaluate_policy(
     seed: int = 0,
     deterministic: bool = True,
 ) -> dict[str, float]:
-    """Run a deterministic evaluation using the project success-detection logic."""
+    """Run a deterministic evaluation and summarize rollout metrics."""
 
-    returns: list[float] = []
-    success_flags: list[float] = []
-
-    for ep in range(episodes):
-        obs, _ = env.reset(seed=seed + ep)
-        done = False
-        ep_return = 0.0
-        ep_success = False
-
-        while not done:
-            action, _state = model.predict(obs, deterministic=deterministic)
-            obs, reward, terminated, truncated, info = env.step(action)
-            ep_return += float(reward)
-            ep_success = ep_success or infer_success(info, env)
-            done = bool(terminated or truncated)
-
-        returns.append(ep_return)
-        success_flags.append(float(ep_success))
-
-    return {
-        "eval_return_mean": float(np.mean(returns)) if returns else 0.0,
-        "eval_return_std": float(np.std(returns)) if returns else 0.0,
-        "eval_success_rate": float(np.mean(success_flags)) if success_flags else 0.0,
-    }
+    return summarize_rollout_episodes(
+        model=model,
+        env=env,
+        episodes=episodes,
+        seed=seed,
+        deterministic=deterministic,
+    )
 
 
 class ValidationCallback(BaseCallback):
@@ -269,6 +252,9 @@ class ValidationCallback(BaseCallback):
 
         self._best_success: float = -1.0
         self._best_return_mean: float = -np.inf
+        self._best_episode_length_mean: float = -np.inf
+        self._best_action_magnitude_mean: float = -np.inf
+        self._best_door_angle_final_mean: float = -np.inf
         self._best_step: int = 0
         self._no_improve_evals: int = 0
         self._history: list[dict[str, float]] = []
@@ -287,6 +273,30 @@ class ValidationCallback(BaseCallback):
         )
 
     @property
+    def best_episode_length_mean(self) -> float:
+        return float(
+            self._best_episode_length_mean
+            if np.isfinite(self._best_episode_length_mean)
+            else 0.0
+        )
+
+    @property
+    def best_action_magnitude_mean(self) -> float:
+        return float(
+            self._best_action_magnitude_mean
+            if np.isfinite(self._best_action_magnitude_mean)
+            else 0.0
+        )
+
+    @property
+    def best_door_angle_final_mean(self) -> float:
+        return float(
+            self._best_door_angle_final_mean
+            if np.isfinite(self._best_door_angle_final_mean)
+            else np.nan
+        )
+
+    @property
     def best_step(self) -> int:
         return int(self._best_step)
 
@@ -301,24 +311,43 @@ class ValidationCallback(BaseCallback):
             seed=self._validation_seed,
             deterministic=self._deterministic,
         )
-        success = float(metrics["eval_success_rate"])
-        return_mean = float(metrics["eval_return_mean"])
+        success = float(metrics["success_rate"])
+        return_mean = float(metrics["return_mean"])
+        episode_length_mean = float(metrics["episode_length_mean"])
+        action_magnitude_mean = float(metrics["action_magnitude_mean"])
+        door_angle_final_mean = float(metrics.get("door_angle_final_mean", np.nan))
 
         row = {
             "step": float(self.num_timesteps),
             "val_success_rate": success,
             "val_return_mean": return_mean,
-            "val_return_std": float(metrics["eval_return_std"]),
+            "val_return_std": float(metrics["return_std"]),
+            "val_episode_length_mean": episode_length_mean,
+            "val_episode_length_std": float(metrics["episode_length_std"]),
+            "val_action_magnitude_mean": action_magnitude_mean,
+            "val_action_magnitude_std": float(metrics["action_magnitude_std"]),
         }
+        if "door_angle_final_mean" in metrics:
+            row["val_door_angle_final_mean"] = door_angle_final_mean
+            row["val_door_angle_final_std"] = float(metrics["door_angle_final_std"])
         self._history.append(row)
 
         # Log metrics to MLflow
         mlflow.log_metrics(
-            {
-                "val_success_rate": success,
-                "val_return_mean": return_mean,
-                "val_return_std": float(metrics["eval_return_std"]),
-            },
+            prefixed_metrics(
+                {
+                    "success_rate": success,
+                    "return_mean": return_mean,
+                    "return_std": float(metrics["return_std"]),
+                    "episode_length_mean": episode_length_mean,
+                    "episode_length_std": float(metrics["episode_length_std"]),
+                    "action_magnitude_mean": action_magnitude_mean,
+                    "action_magnitude_std": float(metrics["action_magnitude_std"]),
+                    "door_angle_final_mean": metrics.get("door_angle_final_mean"),
+                    "door_angle_final_std": metrics.get("door_angle_final_std"),
+                },
+                "validation_",
+            ),
             step=self.num_timesteps,
         )
 
@@ -335,6 +364,10 @@ class ValidationCallback(BaseCallback):
         if improved:
             self._best_success = success
             self._best_return_mean = return_mean
+            self._best_episode_length_mean = episode_length_mean
+            self._best_action_magnitude_mean = action_magnitude_mean
+            if "door_angle_final_mean" in metrics:
+                self._best_door_angle_final_mean = door_angle_final_mean
             self._best_step = int(self.num_timesteps)
             self._no_improve_evals = 0
             self.model.save(str(self._best_model_path))
@@ -390,10 +423,6 @@ def main() -> None:
     cfg = load_yaml(args.config)
     ctx = _resolve_run_context(cfg, args)
 
-    # Initialize MLflow experiment
-    mlflow.set_experiment(f"RoboCasa-{ctx.env_cfg.task}")
-    mlflow.start_run(run_name=ctx.run_id)
-
     output_root = ensure_dir(ctx.paths_cfg.get("output_root", "outputs"))
     checkpoint_root = ensure_dir(ctx.paths_cfg.get("checkpoint_root", "checkpoints"))
     tensorboard_root = ensure_dir(
@@ -403,135 +432,198 @@ def main() -> None:
     run_output_dir = ensure_dir(output_root / ctx.run_id)
     run_checkpoint_dir = ensure_dir(checkpoint_root / ctx.run_id)
 
-    # Log training parameters to MLflow
-    mlflow.log_param("algorithm", ctx.algorithm)
-    mlflow.log_param("seed", ctx.seed)
-    mlflow.log_param("total_timesteps", ctx.total_timesteps)
-    mlflow.log_param("task", ctx.env_cfg.task)
-
-    # Log hyperparameters from train config
-    for key, value in ctx.train_cfg.items():
-        if key not in ["policy_kwargs", "net_arch"] and not isinstance(
-            value, (dict, list)
-        ):
-            try:
-                mlflow.log_param(f"train_{key}", value)
-            except Exception:
-                pass  # Skip non-serializable params
-
-    # Training env (with SB3 Monitor for reward/length curves).
     train_env = make_env_from_config(ctx.env_cfg, seed=ctx.seed)
     monitor_path = run_output_dir / "monitor.csv"
     train_env = Monitor(train_env, filename=str(monitor_path))
-
-    model = _build_model(
-        ctx.algorithm, train_env, ctx.train_cfg, tensorboard_root, ctx.seed
-    )
-
-    callbacks: list[BaseCallback] = []
-
-    save_freq_steps = int(ctx.train_cfg.get("save_freq_steps", 50_000))
-    if save_freq_steps > 0:
-        callbacks.append(
-            CheckpointCallback(
-                save_freq=save_freq_steps,
-                save_path=str(run_checkpoint_dir),
-                name_prefix=ctx.algorithm.lower(),
-                save_replay_buffer=False,
-                save_vecnormalize=False,
-            )
-        )
-
-    eval_freq = int(ctx.eval_cfg.get("eval_freq", 0))
+    model: BaseAlgorithm | None = None
     val_callback: ValidationCallback | None = None
-    if eval_freq > 0:
-        validation_seed = int(ctx.eval_cfg.get("validation_seed", ctx.seed + 10_000))
-        val_env = make_env_from_config(ctx.env_cfg, seed=validation_seed)
-        val_callback = ValidationCallback(
-            eval_env=val_env,
-            eval_freq=eval_freq,
-            n_eval_episodes=int(ctx.eval_cfg.get("n_eval_episodes", 20)),
-            log_path=run_output_dir / "validation_curve.csv",
-            best_model_path=run_checkpoint_dir / "best_model",
-            validation_seed=validation_seed,
-            patience=int(ctx.eval_cfg.get("early_stopping_patience", 0)),
-            deterministic=bool(ctx.eval_cfg.get("deterministic", True)),
-        )
-        callbacks.append(val_callback)
+    summary: dict[str, Any] = {}
+    final_model_path: Path | None = None
+    try:
+        # Initialize MLflow experiment
+        mlflow.set_experiment(f"RoboCasa-{ctx.env_cfg.task}")
+        mlflow.start_run(run_name=ctx.run_id)
 
-    model.learn(total_timesteps=ctx.total_timesteps, callback=callbacks or None)
-
-    final_model_path = run_checkpoint_dir / "final_model"
-    model.save(str(final_model_path))
-
-    final_metrics = _evaluate_policy(
-        model,
-        train_env,
-        episodes=int(ctx.train_cfg.get("eval_episodes", 5)),
-        seed=ctx.seed,
-    )
-
-    _export_training_curve(monitor_path, run_output_dir / "training_curve.csv")
-
-    summary = {
-        "run_id": ctx.run_id,
-        "task": ctx.env_cfg.task,
-        "algorithm": ctx.algorithm,
-        "seed": ctx.seed,
-        "total_timesteps": ctx.total_timesteps,
-        "final_model": f"{final_model_path}.zip",
-        **final_metrics,
-    }
-    if val_callback is not None:
-        summary.update(
-            {
-                "best_model": f"{run_checkpoint_dir / 'best_model'}.zip",
-                "best_validation_success_rate": val_callback.best_success,
-                "best_validation_return_mean": val_callback.best_return_mean,
-                "best_validation_step": val_callback.best_step,
-            }
+        # Log training parameters to MLflow
+        mlflow.log_param("algorithm", ctx.algorithm)
+        mlflow.log_param("seed", ctx.seed)
+        mlflow.log_param("total_timesteps", ctx.total_timesteps)
+        mlflow.log_param("task", ctx.env_cfg.task)
+        mlflow.log_param("eval_freq", int(ctx.eval_cfg.get("eval_freq", 0)))
+        mlflow.log_param("n_eval_episodes", int(ctx.eval_cfg.get("n_eval_episodes", 0)))
+        mlflow.log_param(
+            "early_stopping_patience",
+            int(ctx.eval_cfg.get("early_stopping_patience", 0)),
         )
 
-    # Log final metrics to MLflow
-    mlflow.log_metrics(
-        {
-            "final_return_mean": final_metrics.get("eval_return_mean", 0.0),
-            "final_return_std": final_metrics.get("eval_return_std", 0.0),
-            "final_success_rate": final_metrics.get("eval_success_rate", 0.0),
+        # Log hyperparameters from train config
+        for key, value in ctx.train_cfg.items():
+            if key not in ["policy_kwargs", "net_arch"] and not isinstance(
+                value, (dict, list)
+            ):
+                try:
+                    mlflow.log_param(f"train_{key}", value)
+                except Exception:
+                    pass  # Skip non-serializable params
+
+        model = _build_model(
+            ctx.algorithm, train_env, ctx.train_cfg, tensorboard_root, ctx.seed
+        )
+
+        callbacks: list[BaseCallback] = []
+
+        save_freq_steps = int(ctx.train_cfg.get("save_freq_steps", 50_000))
+        if save_freq_steps > 0:
+            callbacks.append(
+                CheckpointCallback(
+                    save_freq=save_freq_steps,
+                    save_path=str(run_checkpoint_dir),
+                    name_prefix=ctx.algorithm.lower(),
+                    save_replay_buffer=False,
+                    save_vecnormalize=False,
+                )
+            )
+
+        eval_freq = int(ctx.eval_cfg.get("eval_freq", 0))
+        if eval_freq > 0:
+            validation_seed = int(
+                ctx.eval_cfg.get("validation_seed", ctx.seed + 10_000)
+            )
+            val_env = make_env_from_config(ctx.env_cfg, seed=validation_seed)
+            val_callback = ValidationCallback(
+                eval_env=val_env,
+                eval_freq=eval_freq,
+                n_eval_episodes=int(ctx.eval_cfg.get("n_eval_episodes", 20)),
+                log_path=run_output_dir / "validation_curve.csv",
+                best_model_path=run_checkpoint_dir / "best_model.zip",
+                validation_seed=validation_seed,
+                patience=int(ctx.eval_cfg.get("early_stopping_patience", 0)),
+                deterministic=bool(ctx.eval_cfg.get("deterministic", True)),
+            )
+            callbacks.append(val_callback)
+
+        model.learn(total_timesteps=ctx.total_timesteps, callback=callbacks or None)
+
+        final_model_path = run_checkpoint_dir / "final_model.zip"
+        model.save(str(final_model_path))
+
+        final_metrics = _evaluate_policy(
+            model,
+            train_env,
+            episodes=int(ctx.train_cfg.get("eval_episodes", 5)),
+            seed=ctx.seed,
+        )
+
+        _export_training_curve(monitor_path, run_output_dir / "training_curve.csv")
+
+        summary = {
+            "run_id": ctx.run_id,
+            "task": ctx.env_cfg.task,
+            "algorithm": ctx.algorithm,
+            "seed": ctx.seed,
+            "total_timesteps": ctx.total_timesteps,
+            "final_model": str(final_model_path),
+            "train_return_mean": final_metrics["return_mean"],
+            "train_return_std": final_metrics["return_std"],
+            "train_success_rate": final_metrics["success_rate"],
+            "train_episode_length_mean": final_metrics["episode_length_mean"],
+            "train_episode_length_std": final_metrics["episode_length_std"],
+            "train_action_magnitude_mean": final_metrics["action_magnitude_mean"],
+            "train_action_magnitude_std": final_metrics["action_magnitude_std"],
+            "eval_return_mean": final_metrics["return_mean"],
+            "eval_return_std": final_metrics["return_std"],
+            "eval_success_rate": final_metrics["success_rate"],
+            "eval_episode_length_mean": final_metrics["episode_length_mean"],
+            "eval_episode_length_std": final_metrics["episode_length_std"],
+            "eval_action_magnitude_mean": final_metrics["action_magnitude_mean"],
+            "eval_action_magnitude_std": final_metrics["action_magnitude_std"],
         }
-    )
+        if "door_angle_final_mean" in final_metrics:
+            summary["train_door_angle_final_mean"] = final_metrics["door_angle_final_mean"]
+            summary["train_door_angle_final_std"] = final_metrics[
+                "door_angle_final_std"
+            ]
+            summary["eval_door_angle_final_mean"] = final_metrics[
+                "door_angle_final_mean"
+            ]
+            summary["eval_door_angle_final_std"] = final_metrics[
+                "door_angle_final_std"
+            ]
 
-    if val_callback is not None:
+        if val_callback is not None:
+            summary.update(
+                {
+                    "best_model": str(run_checkpoint_dir / "best_model.zip"),
+                    "best_validation_success_rate": val_callback.best_success,
+                    "best_validation_return_mean": val_callback.best_return_mean,
+                    "best_validation_episode_length_mean": val_callback.best_episode_length_mean,
+                    "best_validation_action_magnitude_mean": val_callback.best_action_magnitude_mean,
+                    "best_validation_step": val_callback.best_step,
+                }
+            )
+            if np.isfinite(val_callback.best_door_angle_final_mean):
+                summary["best_validation_door_angle_final_mean"] = (
+                    val_callback.best_door_angle_final_mean
+                )
+            summary["train_validation_success_gap_best"] = (
+                final_metrics["success_rate"] - val_callback.best_success
+            )
+
+        # Log final metrics to MLflow
         mlflow.log_metrics(
-            {
-                "best_validation_success_rate": val_callback.best_success,
-                "best_validation_return_mean": val_callback.best_return_mean,
-                "best_validation_step": val_callback.best_step,
-            }
+            prefixed_metrics(final_metrics, "train_"),
+            step=ctx.total_timesteps,
         )
 
-    with (run_output_dir / "train_summary.json").open("w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
+        if val_callback is not None:
+            mlflow.log_metrics(
+                {
+                    "best_validation_success_rate": val_callback.best_success,
+                    "best_validation_return_mean": val_callback.best_return_mean,
+                    "best_validation_episode_length_mean": val_callback.best_episode_length_mean,
+                    "best_validation_action_magnitude_mean": val_callback.best_action_magnitude_mean,
+                    "best_validation_step": val_callback.best_step,
+                },
+                step=val_callback.best_step,
+            )
+            if np.isfinite(val_callback.best_door_angle_final_mean):
+                mlflow.log_metric(
+                    "best_validation_door_angle_final_mean",
+                    val_callback.best_door_angle_final_mean,
+                    step=val_callback.best_step,
+                )
+            mlflow.log_metric(
+                "train_validation_success_gap_best",
+                final_metrics["success_rate"] - val_callback.best_success,
+                step=ctx.total_timesteps,
+            )
 
-    # Store resolved config for reproducibility and experiment tracing.
-    with (run_output_dir / "resolved_train_config.yaml").open(
-        "w", encoding="utf-8"
-    ) as f:
-        yaml.safe_dump(cfg, f, sort_keys=False)
+        with (run_output_dir / "train_summary.json").open("w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
 
-    # Log artifacts to MLflow
-    mlflow.log_artifact(str(run_output_dir / "train_summary.json"))
-    mlflow.log_artifact(str(run_output_dir / "resolved_train_config.yaml"))
-    if (run_output_dir / "validation_curve.csv").exists():
-        mlflow.log_artifact(str(run_output_dir / "validation_curve.csv"))
-    if (run_output_dir / "training_curve.csv").exists():
-        mlflow.log_artifact(str(run_output_dir / "training_curve.csv"))
-    mlflow.log_artifact(str(run_checkpoint_dir / "best_model.zip"))
+        # Store resolved config for reproducibility and experiment tracing.
+        with (run_output_dir / "resolved_train_config.yaml").open(
+            "w", encoding="utf-8"
+        ) as f:
+            yaml.safe_dump(cfg, f, sort_keys=False)
 
-    # End MLflow run
-    mlflow.end_run()
+        # Log artifacts to MLflow
+        mlflow.log_artifact(str(run_output_dir / "train_summary.json"))
+        mlflow.log_artifact(str(run_output_dir / "resolved_train_config.yaml"))
+        if (run_output_dir / "validation_curve.csv").exists():
+            mlflow.log_artifact(str(run_output_dir / "validation_curve.csv"))
+        if (run_output_dir / "training_curve.csv").exists():
+            mlflow.log_artifact(str(run_output_dir / "training_curve.csv"))
+        if (run_checkpoint_dir / "best_model.zip").exists():
+            mlflow.log_artifact(str(run_checkpoint_dir / "best_model.zip"))
+        if final_model_path is not None and final_model_path.exists():
+            mlflow.log_artifact(str(final_model_path))
 
-    train_env.close()
+    finally:
+        if mlflow.active_run() is not None:
+            mlflow.end_run()
+        train_env.close()
+
     print(json.dumps(summary, indent=2))
 
 

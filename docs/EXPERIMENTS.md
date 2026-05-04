@@ -130,7 +130,7 @@ checkpoints/<run_id>/
 
 | Métrique | Source | Cible |
 |---|---|---|
-| Train success rate | `train_summary.json:eval_success_rate` | > 90 % |
+| Train success rate | `train_summary.json:train_success_rate` | > 90 % |
 | Validation success rate | `validation_curve.csv` (max) | > 80 % |
 | Test success rate | eval split=test | > 60–70 % |
 | Écart train ↔ test | différence | < 15–20 points |
