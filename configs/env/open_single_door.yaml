@@ -7,7 +7,7 @@ env:
   control_freq: 20
 
   reward_shaping: true
-  use_object_obs: false
+  use_object_obs: true
   use_camera_obs: false
 
   has_renderer: false

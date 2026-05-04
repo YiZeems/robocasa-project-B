@@ -10,14 +10,21 @@
 #SBATCH --error=logs/slurm/%x-%A_%a.err
 
 # SLURM array launcher: one seed per array index.
+# Algorithm is selected via the YAML pointed to by CONFIG_PATH (PPO or SAC).
+# Examples:
+#   sbatch scripts/slurm/train_array.sbatch
+#   sbatch --export=ALL,CONFIG_PATH=configs/train/open_single_door_sac.yaml \
+#          scripts/slurm/train_array.sbatch
+#   sbatch --export=ALL,CONFIG_PATH=configs/train/open_single_door_sac_tuned.yaml,SEEDS_CSV=0,1,2 \
+#          scripts/slurm/train_array.sbatch
 set -euo pipefail
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs/slurm
-REPO_ROOT="$(pwd)"
 
 CONFIG_PATH="${CONFIG_PATH:-configs/train/open_single_door_ppo.yaml}"
 SEEDS_CSV="${SEEDS_CSV:-0,1,2}"
+echo "Config: ${CONFIG_PATH} | Seeds: ${SEEDS_CSV}"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "Error: uv is not available in PATH."
