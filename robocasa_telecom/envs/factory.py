@@ -197,13 +197,25 @@ class RawRoboCasaAdapter(_GymEnvBase):
         """Flatten observations while keeping a fixed key order across resets/episodes."""
 
         selected = self._select_obs(obs)
-        aligned = {
-            key: np.asarray(
-                selected.get(key, np.zeros(self._dict_space[key].shape)),
-                dtype=np.float32,
-            )
-            for key in self._obs_keys
-        }
+        aligned: dict[str, np.ndarray] = {}
+        for key in self._obs_keys:
+            expected_shape = self._dict_space[key].shape
+            expected_size = int(np.prod(expected_shape, dtype=np.int64))
+            value = selected.get(key)
+            if value is None:
+                aligned[key] = np.zeros(expected_shape, dtype=np.float32)
+                continue
+
+            arr = np.asarray(value, dtype=np.float32).reshape(-1)
+            if arr.size < expected_size:
+                padded = np.zeros(expected_size, dtype=np.float32)
+                padded[: arr.size] = arr
+                arr = padded
+            elif arr.size > expected_size:
+                arr = arr[:expected_size]
+
+            aligned[key] = arr.reshape(expected_shape)
+
         flat = space_utils.flatten(self._dict_space, aligned)
         return np.asarray(flat, dtype=np.float32)
 
@@ -250,6 +262,34 @@ class RawRoboCasaAdapter(_GymEnvBase):
 
     def close(self):
         self.raw_env.close()
+
+
+def _obs_shape_matches_space(env: Any, obs: Any) -> bool:
+    """Return whether an observation shape matches the declared observation space."""
+
+    expected_shape = getattr(getattr(env, "observation_space", None), "shape", None)
+    if expected_shape is None:
+        return True
+    return tuple(np.asarray(obs).shape) == tuple(expected_shape)
+
+
+def _gym_wrapper_is_stable(env: Any, seed: int | None) -> bool:
+    """Probe multiple resets to detect GymWrapper observation-shape drift."""
+
+    probe_seeds = []
+    base_seed = 0 if seed is None else int(seed)
+    probe_seeds.append(base_seed)
+    probe_seeds.append(base_seed + 1)
+
+    seen_shapes: set[tuple[int, ...]] = set()
+    for probe_seed in probe_seeds:
+        obs, _ = env.reset(seed=probe_seed)
+        obs_shape = tuple(np.asarray(obs).shape)
+        if not _obs_shape_matches_space(env, obs):
+            return False
+        seen_shapes.add(obs_shape)
+
+    return len(seen_shapes) == 1
 
 
 def _resolve_controller_config(env_cfg: EnvConfig):
@@ -366,6 +406,12 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
                     raw_env=raw_env,
                     horizon=env_cfg.horizon,
                 )
+                if not _gym_wrapper_is_stable(env, seed):
+                    print(
+                        "[make_env_from_config] GymWrapper observation shape is unstable; "
+                        "falling back to RawRoboCasaAdapter."
+                    )
+                    env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
             except Exception:
                 # Fallback to raw adapter if GymWrapper breaks on a version combination.
                 env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)

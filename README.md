@@ -95,8 +95,8 @@ flowchart LR
 │       ├── open_single_door_ppo.yaml          # smoke (200k)
 │       └── open_single_door_ppo_baseline.yaml # baseline (5M)
 ├── scripts/
-│   ├── setup_uv.sh             # bootstrap uv + clones robosuite/robocasa
-│   ├── with_env.sh             # exécution dans le venv uv
+│   ├── setup_uv.sh             # bootstrap uv + clones robosuite/robocasa + assets
+│   ├── with_env.sh             # fallback pour exécuter une commande dans .venv
 │   ├── run_train.sh, run_eval.sh
 │   └── slurm/{train_array,eval}.sbatch
 ├── docs/
@@ -123,7 +123,7 @@ flowchart TD
     G -- SAC --> I[_build_sac]
     H --> J[model.learn]
     I --> J
-    J --> K[CheckpointCallback<br/>save_freq_steps]
+    J --> K[PeriodicCheckpointCallback<br/>save_freq_steps]
     J --> L[ValidationCallback<br/>eval_freq=25k]
     L --> E
     L --> M{success > best ?}
@@ -164,8 +164,9 @@ bash scripts/setup_uv.sh
 ```
 
 Ce script clone `external/robosuite` + `external/robocasa` aux commits fixés,
-crée `.venv` via `uv`, installe le package en editable, télécharge les assets
-RoboCasa et valide les imports.
+crée `.venv` via `uv`, installe les dépendances locales `robocasa` /
+`robosuite` depuis `external/`, relie ou télécharge les assets RoboCasa, puis
+valide les assets et les imports.
 
 Variables d'environnement utiles :
 
@@ -184,6 +185,16 @@ make sanity
 uv run python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
 ```
 
+Vérifications rapides recommandées après setup :
+
+```bash
+make check
+make sanity
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_sac_debug.yaml \
+  --seed 0 --total-timesteps 10 --no-auto-resume
+```
+
 ## 5. Lancer un run
 
 Cibles `make` prêtes à l'emploi (paramétrables via `SEED=<n>`) :
@@ -192,8 +203,20 @@ Cibles `make` prêtes à l'emploi (paramétrables via `SEED=<n>`) :
 make train-sac-debug      # 300k — sanity SAC
 make train-sac            # 3M    — run principal SAC
 make train-sac-tuned      # 2M    — variante (lr=1e-4, batch=512, ent=auto_0.2)
+make train-ppo            # 200k  — smoke PPO
 make train-ppo-baseline   # 5M    — baseline PPO
 ```
+
+Matrice des commandes recommandées :
+
+| Usage | Commande |
+|---|---|
+| Smoke setup + train court | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_debug.yaml --seed 0 --total-timesteps 10 --no-auto-resume` |
+| SAC debug | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_debug.yaml --seed 0` |
+| SAC principal | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac.yaml --seed 0` |
+| SAC tuned | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_tuned.yaml --seed 0` |
+| PPO smoke | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_ppo.yaml --seed 0` |
+| PPO baseline | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_ppo_baseline.yaml --seed 0` |
 
 Commande recommandée :
 
@@ -204,6 +227,13 @@ uv run python -m robocasa_telecom.train \
 
 Le wrapper `scripts/run_train.sh` reste disponible, mais il n’est pas
 nécessaire si `uv` est déjà installé.
+
+Note environnement :
+- `make_env_from_config` tente le `GymWrapper` RoboSuite puis bascule
+  automatiquement vers `RawRoboCasaAdapter` si la shape d'observation dérive
+  entre resets.
+- Les warnings `mink`, `mimicgen` ou `Gym has been unmaintained` sont connus
+  sur cette stack et ne bloquent pas les runs validés ici.
 
 Override CLI :
 

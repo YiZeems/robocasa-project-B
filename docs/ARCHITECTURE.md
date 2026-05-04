@@ -22,8 +22,8 @@ Cette séparation permet:
 ### Couche Environnement
 - `robocasa_telecom/envs/factory.py`: traduit la config YAML en env RoboCasa exécutable.
 - Fournit deux adaptateurs Gymnasium:
-  - `GymnasiumAdapter` (si wrapper robosuite stable),
-  - `RawRoboCasaAdapter` (fallback robuste, flatten dict observations).
+  - `GymnasiumAdapter` (seulement si le `GymWrapper` RoboSuite garde une shape stable),
+  - `RawRoboCasaAdapter` (fallback robuste, flatten dict observations + normalisation de taille).
 
 ### Couche RL
 - `robocasa_telecom/rl/train.py`: boucle d'entraînement PPO + checkpoints + export courbes.
@@ -44,26 +44,26 @@ Cette séparation permet:
 ## 3) Flux d'exécution détaillé
 
 ### 3.1 Train
-1. `python -m robocasa_telecom.train ...`
+1. `uv run python -m robocasa_telecom.train ...`
 2. wrapper `robocasa_telecom/train.py` -> `robocasa_telecom/rl/train.py`.
 3. Chargement YAML train + YAML env.
 4. Création env via `make_env_from_config`.
 5. Wrapping Monitor SB3 (écriture `monitor.csv`).
-6. Construction modèle PPO.
-7. `model.learn(...)` avec `CheckpointCallback`.
-8. Sauvegarde `final_model.zip`.
-9. Évaluation courte post-train.
-10. Export `training_curve.csv` + `train_summary.json`.
+6. Construction modèle PPO ou SAC.
+7. `model.learn(...)` avec `PeriodicCheckpointCallback` + `ValidationCallback`.
+8. Sauvegarde `final_model.zip` + métadonnées de reprise.
+9. Évaluation post-train + log MLflow.
+10. Export `training_curve.csv`, `validation_curve.csv` et `train_summary.json`.
 
 ### 3.2 Évaluation
-1. `python -m robocasa_telecom.evaluate ...`
+1. `uv run python -m robocasa_telecom.evaluate ...`
 2. Chargement config + checkpoint.
 3. Rollouts déterministes/non déterministes.
 4. Calcul `return_mean`, `return_std`, `success_rate`.
 5. Export JSON dans `outputs/eval/`.
 
 ### 3.3 Sanity
-1. `python -m robocasa_telecom.sanity ...`
+1. `uv run python -m robocasa_telecom.sanity ...`
 2. Reset env.
 3. `N` pas aléatoires.
 4. Succès si aucune exception + fermeture propre.
@@ -76,6 +76,7 @@ Cette séparation permet:
   - `load_composite_controller_config`,
   - sinon `load_part_controller_config`,
   - sinon composite par défaut.
+- Le `GymWrapper` est sondé sur plusieurs resets; s'il dérive, le projet retombe automatiquement sur `RawRoboCasaAdapter`.
 - Si les assets manquent, l'erreur est transformée en message actionnable.
 
 ## 5) Artefacts et reproductibilité
