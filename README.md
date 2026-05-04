@@ -1,43 +1,28 @@
 # RoboCasa Project B (Telecom)
 
-Squelette exécutable pour entraîner et évaluer un agent RL sur RoboCasa, aligné avec `ARISE-Initiative/robosuite` (package Python racine + scripts opérationnels + configs + docs + tests).
+Squelette exécutable pour entraîner et évaluer un agent RL sur RoboCasa, avec un flux d'installation basé sur `uv`.
 
 ## Objectif
 
 - entraîner/évaluer une baseline PPO sur la tâche `OpenCabinet` (alias gérés: `OpenSingleDoor`, `OpenDoor`);
 - exécuter en local et sur cluster SLURM GPU;
-- produire des artefacts reproductibles (checkpoints, courbes, métriques, logs).
+- produire des artefacts reproductibles.
 
-## Compatibilité OS (important)
+## Compatibilité OS
 
-Le projet supporte:
-
-- Linux: recommandé (local/cluster)
+- Linux: recommandé
 - macOS: supporté pour dev/tests locaux
-- Windows: supporté via Git Bash ou WSL (recommandé), pas via `cmd.exe` brut
+- Windows: supporté via Git Bash ou WSL, pas via `cmd.exe` brut
 
-Les scripts `scripts/setup_conda.sh` et `scripts/with_env.sh` détectent l'OS automatiquement et affichent des indications adaptées.
+Le projet est compatible avec `uv` sur les trois OS, mais les dépendances robotiques restent le point sensible sur Windows natif.
 
-## Architecture attendue après setup
-
-Après `git clone`, certains éléments sont absents du dépôt (normal, gitignore):
-
-- `external/robosuite`, `external/robocasa` (clonés par setup)
-- assets RoboCasa (`external/robocasa/robocasa/models/assets/...`)
-- artefacts (`checkpoints`, `outputs`, `logs`)
-- environnement conda local
-
-Structure du dépôt:
+## Structure
 
 ```text
 .
-├── robocasa_telecom/           # package principal
-│   ├── envs/                   # factory env + adapters
-│   ├── rl/                     # train/eval
-│   ├── tools/                  # sanity
-│   └── utils/
+├── robocasa_telecom/
 ├── scripts/
-│   ├── setup_conda.sh
+│   ├── setup_uv.sh
 │   ├── with_env.sh
 │   ├── run_train.sh
 │   ├── run_eval.sh
@@ -45,74 +30,34 @@ Structure du dépôt:
 ├── configs/
 ├── docs/
 ├── tests/
-├── environment.yml
-└── requirements-project.txt
+└── pyproject.toml
 ```
 
-## Ressources minimales
-
-- Stockage disque:
-  - minimum: `25 Go` libres
-  - recommandé: `40+ Go` libres
-- RAM:
-  - minimum: `16 Go`
-  - recommandé: `32 Go`
-- Calcul:
-  - minimum: CPU moderne (fonctionne mais lent)
-  - recommandé: GPU NVIDIA `8 Go VRAM` ou plus
-
-### Ce qui prend le plus de place
-
-- `external/robocasa/robocasa/models/assets/`: principal poste (`~10-20+ Go`)
-- `external/robosuite` + `external/robocasa`: code source (`~1-3 Go` cumulés)
-- `checkpoints/`, `outputs/`, `logs/`: grossissent avec les runs
-- env Conda `robocasa_telecom`: plusieurs Go hors dépôt
-
-Audit rapide:
+## Setup
 
 ```bash
-du -sh external checkpoints outputs logs 2>/dev/null
-du -h -d 2 external/robocasa/robocasa/models/assets 2>/dev/null | sort -h | tail -n 20
+bash scripts/setup_uv.sh
 ```
 
-## Setup complet (guide de reconstruction)
+Ce script:
+- clone `external/robosuite` et `external/robocasa`;
+- fixe les commits utilisés par le projet;
+- crée/actualise `.venv` via `uv`;
+- installe ce dépôt et les dépendances Python;
+- lance les downloads/validations RoboCasa si demandé.
 
-### 1) Clone
-
-```bash
-git clone git@github.com:YiZeems/robocasa-project-B.git
-cd robocasa-project-B
-```
-
-### 2) Setup conda + dépendances + externals
-
-```bash
-bash scripts/setup_conda.sh
-conda activate robocasa_telecom
-```
-
-Ce que fait `scripts/setup_conda.sh`:
-
-- détecte l'OS (Linux/macOS/Windows Git Bash/WSL);
-- crée/réutilise `robocasa_telecom` en Python `3.11`;
-- clone + checkout les commits figés de `robosuite` et `robocasa`;
-- installe en editable: `external/robosuite`, `external/robocasa`, `.` ;
-- installe [requirements-project.txt](/Users/yimouzhang/Documents/Telecom_Paris/Mastere_Specialise/Intelligence_Artificielle_Multimodale/IA705_Apprentissage_pour_la_robotique/projet/robocasa-project-B/requirements-project.txt);
-- télécharge/valide les assets (si `DOWNLOAD_ASSETS=1`);
-- valide les imports critiques.
-
-Si `conda activate` ne marche pas:
+Pour exécuter une commande sans activer manuellement l'environnement:
 
 ```bash
 scripts/with_env.sh python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
 ```
 
-### 3) Vérification post-install
+## Vérification
 
 ```bash
-python -m pip check
+uv run python -m pip check
 pytest -q
-python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
+uv run python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
 ```
 
 ## Commandes principales
@@ -120,26 +65,16 @@ python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --s
 Train:
 
 ```bash
-python -m robocasa_telecom.train --config configs/train/open_single_door_ppo.yaml --seed 0
+uv run python -m robocasa_telecom.train --config configs/train/open_single_door_ppo.yaml --seed 0
 ```
 
-Eval (checkpoint explicite):
+Eval:
 
 ```bash
-python -m robocasa_telecom.evaluate \
+uv run python -m robocasa_telecom.evaluate \
   --config configs/train/open_single_door_ppo.yaml \
   --checkpoint checkpoints/<run_id>/final_model.zip \
   --num-episodes 20 \
-  --deterministic
-```
-
-Eval (dernier checkpoint automatiquement):
-
-```bash
-python -m robocasa_telecom.evaluate \
-  --config configs/train/open_single_door_ppo.yaml \
-  --checkpoint "$(ls -t checkpoints/*/final_model.zip | head -n 1)" \
-  --num-episodes 2 \
   --deterministic
 ```
 
@@ -149,23 +84,6 @@ Visualisation:
 scripts/with_env.sh python scripts/visualize_env.py --config configs/env/open_single_door.yaml --steps 200
 ```
 
-## Validation fonctionnelle de bout en bout
-
-```bash
-python -m robocasa_telecom.train \
-  --config configs/train/open_single_door_ppo.yaml \
-  --seed 0 \
-  --total-timesteps 256
-
-python -m robocasa_telecom.evaluate \
-  --config configs/train/open_single_door_ppo.yaml \
-  --checkpoint "$(ls -t checkpoints/*/final_model.zip | head -n 1)" \
-  --num-episodes 2 \
-  --deterministic
-```
-
-Note: PPO SB3 exécute au minimum `n_steps` transitions (par défaut `2048`), même si `--total-timesteps` est plus petit.
-
 ## SLURM
 
 ```bash
@@ -173,26 +91,8 @@ sbatch scripts/slurm/train_array.sbatch
 sbatch --export=ALL,CHECKPOINT_PATH=checkpoints/<run_id>/final_model.zip scripts/slurm/eval.sbatch
 ```
 
-## Sorties générées
+## Notes
 
-- `checkpoints/<run_id>/final_model.zip`
-- `outputs/<run_id>/monitor.csv`
-- `outputs/<run_id>/training_curve.csv`
-- `outputs/<run_id>/train_summary.json`
-- `outputs/eval/eval_YYYYmmdd_HHMMSS.json`
-
-## Warnings connus non bloquants
-
-- `mimicgen environments not imported`
-- warning IK `mink` côté robosuite
-- message `gym` legacy affiché par dépendances tierces
-
-## Documentation détaillée
-
-- [Architecture détaillée](docs/ARCHITECTURE.md)
-- [Méthodes RL et choix techniques](docs/METHODS.md)
-- [Runbook local + cluster](docs/RUNBOOK.md)
-- [Organisation équipe de 4](docs/COLLABORATION.md)
-- [Packages installés/utilisés](docs/PACKAGES.md)
-- [CI/CD Linux](docs/CI.md)
-- [Référence fichier par fichier](docs/FILE_REFERENCE.md)
+- `pyproject.toml` est la source de vérité pour le packaging et les dépendances.
+- `uv` gère le venv et les dépendances Python, mais pas les paquets système comme `ffmpeg` ou `cmake`.
+- les assets RoboCasa restent volumineux et sont téléchargés à part.
