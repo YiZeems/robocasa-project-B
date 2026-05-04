@@ -37,7 +37,7 @@ Cette séparation permet:
 - `robocasa_telecom/utils/success.py`: logique homogène de détection du succès.
 
 ### Couche Exécution
-- `scripts/setup_conda.sh`: provisioning environnement.
+- `scripts/setup_uv.sh`: provisioning environnement.
 - `scripts/run_train.sh` / `scripts/run_eval.sh`: wrappers locaux.
 - `scripts/slurm/*.sbatch`: exécution GPU cluster.
 
@@ -83,7 +83,7 @@ Cette séparation permet:
 - Le nom de run inclut `task`, `seed`, timestamp.
 - Les chemins d'artefacts sont centralisés dans `configs/train/*.yaml`.
 - Les seeds sont explicitement injectées en local et en SLURM array.
-- Les commits `robosuite` / `robocasa` sont fixables dans `setup_conda.sh`.
+- Les commits `robosuite` / `robocasa` sont fixables dans `setup_uv.sh`.
 
 ## 6) Extensibilité
 
