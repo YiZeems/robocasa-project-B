@@ -294,8 +294,8 @@ Pour chaque run `<run_id> = <task>_<algo>_seed<seed>_<timestamp>` :
 outputs/<run_id>/
   monitor.csv                 ← reward / longueur d'épisode (SB3 Monitor)
   training_curve.csv          ← export plot-friendly
-  validation_curve.csv        ← step / val_success_rate / val_return_mean / std
-  train_summary.json          ← run_id, algo, best step, best success, etc.
+  validation_curve.csv        ← step / val_success / return / length / action magnitude / door angle
+  train_summary.json          ← run_id, algo, train/validation metrics, best step, best success, etc.
   resolved_train_config.yaml  ← config résolue pour reproductibilité
 
 checkpoints/<run_id>/

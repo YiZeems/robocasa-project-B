@@ -20,6 +20,12 @@ from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 
 from ..envs.factory import load_env_config, make_env_from_config
+from ..utils.metrics import (
+    DOOR_ANGLE_KEYS,
+    action_magnitude,
+    extract_scalar_metric,
+    prefixed_metrics,
+)
 from ..utils.io import ensure_dir, load_yaml
 from ..utils.success import infer_success
 from ..utils.video import ensure_uint8_frame, grid_2x2, save_mp4
@@ -208,19 +214,36 @@ def main() -> None:
         algorithm, args.checkpoint, device=cfg.get("train", {}).get("device", "auto")
     )
 
+    metrics = {
+        "task": env_cfg.task,
+        "algorithm": algorithm,
+        "split": args.split,
+        "seed": int(seed),
+        "checkpoint": str(Path(args.checkpoint).resolve()),
+        "video_output_dir": str(video_root.resolve()),
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+
     returns: list[float] = []
     successes: list[float] = []
+    episode_lengths: list[float] = []
+    action_magnitudes: list[float] = []
+    door_angles: list[float] = []
 
     for ep in range(int(args.num_episodes)):
         # Offset seed by episode index to avoid replaying the exact same reset.
         obs, _ = env.reset(seed=seed + ep)
         done = False
         ep_ret = 0.0
+        ep_len = 0
         ep_success = False
         episode_frames: list[np.ndarray] = []
+        ep_action_magnitudes: list[float] = []
+        ep_door_angle: float | None = None
 
         while not done:
             action, _state = model.predict(obs, deterministic=bool(args.deterministic))
+            ep_action_magnitudes.append(action_magnitude(action))
 
             if int(args.video_every) > 0 and ep % int(args.video_every) == 0:
                 camera_frames = [
@@ -230,11 +253,22 @@ def main() -> None:
 
             obs, reward, terminated, truncated, info = env.step(action)
             ep_ret += float(reward)
+            ep_len += 1
             ep_success = ep_success or infer_success(info, env)
             done = bool(terminated or truncated)
 
+            door_angle = extract_scalar_metric(info if isinstance(info, dict) else None, env, DOOR_ANGLE_KEYS)
+            if door_angle is not None:
+                ep_door_angle = door_angle
+
         returns.append(ep_ret)
         successes.append(float(ep_success))
+        episode_lengths.append(float(ep_len))
+        action_magnitudes.append(
+            float(np.mean(ep_action_magnitudes)) if ep_action_magnitudes else 0.0
+        )
+        if ep_door_angle is not None:
+            door_angles.append(ep_door_angle)
 
         if episode_frames:
             video_path = (
@@ -243,28 +277,38 @@ def main() -> None:
             )
             save_mp4(episode_frames, video_path, fps=int(args.video_fps))
 
-    metrics = {
-        "task": env_cfg.task,
-        "algorithm": algorithm,
-        "split": args.split,
-        "seed": int(seed),
-        "checkpoint": str(Path(args.checkpoint).resolve()),
-        "num_episodes": int(args.num_episodes),
-        "return_mean": float(np.mean(returns)) if returns else 0.0,
-        "return_std": float(np.std(returns)) if returns else 0.0,
-        "success_rate": float(np.mean(successes)) if successes else 0.0,
-        "video_output_dir": str(video_root.resolve()),
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-    }
-
-    # Log metrics to MLflow
-    mlflow.log_metrics(
+    metrics.update(
         {
-            "return_mean": metrics["return_mean"],
-            "return_std": metrics["return_std"],
-            "success_rate": metrics["success_rate"],
+            "num_episodes": int(args.num_episodes),
+            "return_mean": float(np.mean(returns)) if returns else 0.0,
+            "return_std": float(np.std(returns)) if returns else 0.0,
+            "success_rate": float(np.mean(successes)) if successes else 0.0,
+            "episode_length_mean": float(np.mean(episode_lengths)) if episode_lengths else 0.0,
+            "episode_length_std": float(np.std(episode_lengths)) if episode_lengths else 0.0,
+            "action_magnitude_mean": float(np.mean(action_magnitudes)) if action_magnitudes else 0.0,
+            "action_magnitude_std": float(np.std(action_magnitudes)) if action_magnitudes else 0.0,
         }
     )
+    if door_angles:
+        metrics["door_angle_final_mean"] = float(np.mean(door_angles))
+        metrics["door_angle_final_std"] = float(np.std(door_angles))
+
+    base_metrics = dict(metrics)
+    split_alias = "validation" if args.split == "validation" else "test" if args.split == "test" else "evaluation"
+    metrics[f"{split_alias}_return_mean"] = metrics["return_mean"]
+    metrics[f"{split_alias}_return_std"] = metrics["return_std"]
+    metrics[f"{split_alias}_success_rate"] = metrics["success_rate"]
+    metrics[f"{split_alias}_episode_length_mean"] = metrics["episode_length_mean"]
+    metrics[f"{split_alias}_episode_length_std"] = metrics["episode_length_std"]
+    metrics[f"{split_alias}_action_magnitude_mean"] = metrics["action_magnitude_mean"]
+    metrics[f"{split_alias}_action_magnitude_std"] = metrics["action_magnitude_std"]
+    if "door_angle_final_mean" in metrics:
+        metrics[f"{split_alias}_door_angle_final_mean"] = metrics["door_angle_final_mean"]
+        metrics[f"{split_alias}_door_angle_final_std"] = metrics["door_angle_final_std"]
+
+    # Log metrics to MLflow
+    mlflow.log_metrics(prefixed_metrics(base_metrics, "eval_"))
+    mlflow.log_metrics(prefixed_metrics(metrics, f"{split_alias}_"))
 
     if args.output:
         output_path = Path(args.output)
