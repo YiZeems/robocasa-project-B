@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import mlflow
 import numpy as np
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
@@ -175,6 +176,19 @@ def main() -> None:
     algorithm = _resolve_algorithm(cfg, args.algorithm)
     seed = _resolve_seed_for_split(args, cfg)
 
+    # Initialize MLflow for evaluation logging
+    mlflow.set_experiment(f"RoboCasa-{env_cfg.task}-Eval")
+    eval_run_name = f"eval_{algorithm}_{args.split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    mlflow.start_run(run_name=eval_run_name)
+
+    # Log evaluation parameters
+    mlflow.log_param("algorithm", algorithm)
+    mlflow.log_param("split", args.split)
+    mlflow.log_param("seed", seed)
+    mlflow.log_param("num_episodes", args.num_episodes)
+    mlflow.log_param("checkpoint", str(Path(args.checkpoint).resolve()))
+    mlflow.log_param("deterministic", args.deterministic)
+
     env = make_env_from_config(env_cfg, seed=seed)
     model = _load_model(
         algorithm, args.checkpoint, device=cfg.get("train", {}).get("device", "auto")
@@ -224,6 +238,15 @@ def main() -> None:
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
 
+    # Log metrics to MLflow
+    mlflow.log_metrics(
+        {
+            "return_mean": metrics["return_mean"],
+            "return_std": metrics["return_std"],
+            "success_rate": metrics["success_rate"],
+        }
+    )
+
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -232,6 +255,12 @@ def main() -> None:
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
+
+    # Log evaluation results as artifact
+    mlflow.log_artifact(str(output_path))
+
+    # End MLflow run
+    mlflow.end_run()
 
     env.close()
     print(json.dumps(metrics, indent=2))
