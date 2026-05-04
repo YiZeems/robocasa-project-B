@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import mlflow
 import numpy as np
 import yaml
 from stable_baselines3 import PPO, SAC
@@ -299,6 +300,16 @@ class ValidationCallback(BaseCallback):
         }
         self._history.append(row)
 
+        # Log metrics to MLflow
+        mlflow.log_metrics(
+            {
+                "val_success_rate": success,
+                "val_return_mean": return_mean,
+                "val_return_std": float(metrics["eval_return_std"]),
+            },
+            step=self.num_timesteps,
+        )
+
         write_header = not self._log_path.exists()
         with self._log_path.open("a", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(row.keys()))
@@ -367,12 +378,30 @@ def main() -> None:
     cfg = load_yaml(args.config)
     ctx = _resolve_run_context(cfg, args)
 
+    # Initialize MLflow experiment
+    mlflow.set_experiment(f"RoboCasa-{ctx.env_cfg.task}")
+    mlflow.start_run(run_name=ctx.run_id)
+
     output_root = ensure_dir(ctx.paths_cfg.get("output_root", "outputs"))
     checkpoint_root = ensure_dir(ctx.paths_cfg.get("checkpoint_root", "checkpoints"))
     tensorboard_root = ensure_dir(ctx.paths_cfg.get("tensorboard_root", "logs/tensorboard"))
 
     run_output_dir = ensure_dir(output_root / ctx.run_id)
     run_checkpoint_dir = ensure_dir(checkpoint_root / ctx.run_id)
+
+    # Log training parameters to MLflow
+    mlflow.log_param("algorithm", ctx.algorithm)
+    mlflow.log_param("seed", ctx.seed)
+    mlflow.log_param("total_timesteps", ctx.total_timesteps)
+    mlflow.log_param("task", ctx.env_cfg.task)
+
+    # Log hyperparameters from train config
+    for key, value in ctx.train_cfg.items():
+        if key not in ["policy_kwargs", "net_arch"] and not isinstance(value, (dict, list)):
+            try:
+                mlflow.log_param(f"train_{key}", value)
+            except Exception:
+                pass  # Skip non-serializable params
 
     # Training env (with SB3 Monitor for reward/length curves).
     train_env = make_env_from_config(ctx.env_cfg, seed=ctx.seed)
@@ -445,12 +474,42 @@ def main() -> None:
             }
         )
 
+    # Log final metrics to MLflow
+    mlflow.log_metrics(
+        {
+            "final_return_mean": final_metrics.get("eval_return_mean", 0.0),
+            "final_return_std": final_metrics.get("eval_return_std", 0.0),
+            "final_success_rate": final_metrics.get("eval_success_rate", 0.0),
+        }
+    )
+
+    if val_callback is not None:
+        mlflow.log_metrics(
+            {
+                "best_validation_success_rate": val_callback.best_success,
+                "best_validation_return_mean": val_callback.best_return_mean,
+                "best_validation_step": val_callback.best_step,
+            }
+        )
+
     with (run_output_dir / "train_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
     # Store resolved config for reproducibility and experiment tracing.
     with (run_output_dir / "resolved_train_config.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
+
+    # Log artifacts to MLflow
+    mlflow.log_artifact(str(run_output_dir / "train_summary.json"))
+    mlflow.log_artifact(str(run_output_dir / "resolved_train_config.yaml"))
+    if (run_output_dir / "validation_curve.csv").exists():
+        mlflow.log_artifact(str(run_output_dir / "validation_curve.csv"))
+    if (run_output_dir / "training_curve.csv").exists():
+        mlflow.log_artifact(str(run_output_dir / "training_curve.csv"))
+    mlflow.log_artifact(str(run_checkpoint_dir / "best_model.zip"))
+
+    # End MLflow run
+    mlflow.end_run()
 
     train_env.close()
     print(json.dumps(summary, indent=2))
