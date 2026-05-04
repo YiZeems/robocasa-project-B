@@ -134,7 +134,7 @@ class RawRoboCasaAdapter(_GymEnvBase):
         if spaces is None or space_utils is None:
             raise ModuleNotFoundError(
                 "gymnasium is required to build RoboCasa adapters. "
-                "Install requirements-project.txt in the project environment."
+                "Install the project dependencies from pyproject.toml in the project environment."
             )
 
         super().__init__()

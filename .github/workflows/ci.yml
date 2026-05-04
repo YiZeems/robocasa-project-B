@@ -22,49 +22,49 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Conda
-        uses: conda-incubator/setup-miniconda@v3
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          miniforge-variant: Miniforge3
-          miniforge-version: latest
           python-version: "3.11"
-          activate-environment: base
-          auto-activate-base: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
       - name: Bootstrap project environment (no heavy assets)
-        shell: bash -l {0}
+        shell: bash
         run: |
-          ENV_NAME=robocasa_telecom \
           DOWNLOAD_ASSETS=0 \
           DOWNLOAD_DATASETS=0 \
           RUN_SETUP_MACROS=0 \
           VERIFY_ASSETS=0 \
-          bash scripts/setup_conda.sh
+          bash scripts/setup_uv.sh
 
       - name: Validate shell scripts
-        shell: bash -l {0}
+        shell: bash
         run: |
-          bash -n scripts/setup_conda.sh \
+          bash -n scripts/setup_uv.sh \
             scripts/run_train.sh \
             scripts/run_eval.sh \
             scripts/slurm/train_array.sbatch \
             scripts/slurm/eval.sbatch
 
       - name: Compile Python modules
-        shell: bash -l {0}
+        shell: bash
         run: |
-          conda run -n robocasa_telecom python -m compileall robocasa_telecom scripts tests
+          uv run python -m compileall robocasa_telecom scripts tests
 
       - name: Config loading smoke test
-        shell: bash -l {0}
+        shell: bash
         run: |
-          conda run -n robocasa_telecom python tests/test_config_loading.py
+          uv run python tests/test_config_loading.py
 
       - name: Validate explicit missing-assets error path
-        shell: bash -l {0}
+        shell: bash
         run: |
           set +e
-          output=$(cd /tmp && conda run -n robocasa_telecom python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 2 2>&1)
+          output=$(uv run python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 2 2>&1)
           status=$?
           set -e
 
@@ -86,26 +86,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Conda
-        uses: conda-incubator/setup-miniconda@v3
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          miniforge-variant: Miniforge3
-          miniforge-version: latest
           python-version: "3.11"
-          activate-environment: base
-          auto-activate-base: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
       - name: Bootstrap with assets (slow)
-        shell: bash -l {0}
+        shell: bash
         run: |
-          ENV_NAME=robocasa_telecom \
           DOWNLOAD_ASSETS=1 \
           DOWNLOAD_DATASETS=0 \
           RUN_SETUP_MACROS=1 \
           VERIFY_ASSETS=1 \
-          bash scripts/setup_conda.sh
+          bash scripts/setup_uv.sh
 
       - name: Runtime sanity with assets
-        shell: bash -l {0}
+        shell: bash
         run: |
-          conda run -n robocasa_telecom python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 5
+          uv run python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 5

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robocasa-telecom"
+version = "0.1.0"
+description = "RoboCasa Telecom project package"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "stable-baselines3==2.3.2",
+  "gymnasium==0.29.1",
+  "pyyaml>=6.0,<7",
+  "numpy==2.2.5",
+  "pandas>=2.2,<3",
+  "tensorboard>=2.16,<2.19",
+  "tqdm>=4.66",
+  "matplotlib>=3.8,<4",
+  "imageio>=2.34,<3",
+  "pytest>=8,<9",
+  "robosuite_models==1.0.0",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["robocasa_telecom", "robocasa_telecom.*"]
+
+[project.scripts]
+robocasa-telecom-train = "robocasa_telecom.train:main"
+robocasa-telecom-evaluate = "robocasa_telecom.evaluate:main"
+robocasa-telecom-sanity = "robocasa_telecom.sanity:main"

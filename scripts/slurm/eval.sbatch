@@ -15,7 +15,6 @@ cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs/slurm outputs/eval
 REPO_ROOT="$(pwd)"
 
-ENV_NAME="${ENV_NAME:-robocasa_telecom}"
 CONFIG_PATH="${CONFIG_PATH:-configs/train/open_single_door_ppo.yaml}"
 NUM_EPISODES="${NUM_EPISODES:-20}"
 CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
@@ -26,12 +25,15 @@ if [ -z "${CHECKPOINT_PATH}" ]; then
   exit 1
 fi
 
-CONDA_BASE="$(conda info --base)"
-# shellcheck source=/dev/null
-source "${CONDA_BASE}/etc/profile.d/conda.sh"
-conda activate "${ENV_NAME}"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "Error: uv is not available in PATH."
+  exit 1
+fi
 
-python -m robocasa_telecom.evaluate \
+export UV_PROJECT_ENVIRONMENT="${SLURM_SUBMIT_DIR:-$PWD}/.venv"
+uv sync --python "${PYTHON_VERSION:-3.11}" >/dev/null
+
+uv run python -m robocasa_telecom.evaluate \
   --config "${CONFIG_PATH}" \
   --checkpoint "${CHECKPOINT_PATH}" \
   --num-episodes "${NUM_EPISODES}" \
