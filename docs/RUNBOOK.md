@@ -44,6 +44,17 @@ Ou:
 bash scripts/run_train.sh configs/train/open_single_door_ppo.yaml 0
 ```
 
+Reprise d'un run interrompu:
+
+```bash
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_sac.yaml \
+  --seed 0 \
+  --resume-from checkpoints/<run_id>/sac_100000_steps.zip
+```
+
+Le wrapper `scripts/run_train.sh` accepte aussi un 3e argument `RESUME_FROM`.
+
 ## Eval
 
 ```bash

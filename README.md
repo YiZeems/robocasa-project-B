@@ -211,6 +211,19 @@ uv run python -m robocasa_telecom.train \
   --algorithm SAC --total-timesteps 500000 --seed 1
 ```
 
+Reprise depuis un checkpoint:
+
+```bash
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_sac.yaml \
+  --seed 1 \
+  --resume-from checkpoints/<run_id>/sac_100000_steps.zip
+```
+
+`--resume-from` accepte aussi un dossier `checkpoints/<run_id>/` et reprend alors
+depuis le dernier `*_steps.zip` disponible. Pour SAC, le replay buffer est
+sauvegardé avec chaque checkpoint périodique.
+
 ## 6. Évaluer un checkpoint
 
 Le run produit `best_model.zip` (meilleur succès validation) et `final_model.zip`.
@@ -302,6 +315,9 @@ checkpoints/<run_id>/
   best_model.zip              ← meilleur succès validation (à utiliser pour le rapport)
   final_model.zip             ← état final
   <algo>_<step>_steps.zip     ← checkpoints périodiques
+  <algo>_<step>_steps_replay_buffer.pkl ← replay buffer SAC pour reprise
+  <algo>_<step>_steps.json     ← métadonnées de reprise du checkpoint
+  final_model.json            ← métadonnées du checkpoint final
 
 outputs/eval/
   eval_<algo>_<split>_<timestamp>.json
