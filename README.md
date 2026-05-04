@@ -224,6 +224,10 @@ uv run python -m robocasa_telecom.train \
 depuis le dernier `*_steps.zip` disponible. Pour SAC, le replay buffer est
 sauvegardé avec chaque checkpoint périodique.
 
+Par défaut, `robocasa_telecom.train` active aussi `--auto-resume` et reprend
+automatiquement le dernier run incomplet qui correspond au même
+`task/algo/seed`. Pour forcer un départ neuf, utilise `--no-auto-resume`.
+
 ## 6. Évaluer un checkpoint
 
 Le run produit `best_model.zip` (meilleur succès validation) et `final_model.zip`.
