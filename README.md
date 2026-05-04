@@ -59,7 +59,7 @@ flowchart LR
     end
     subgraph Pipeline
         F[envs/factory.py<br/>make_env_from_config]
-        T[rl/train.py<br/>SAC | PPO + ValidationCallback]
+        T[rl/train.py<br/>SAC ou PPO + ValidationCallback]
         E[rl/evaluate.py<br/>--split validation/test]
     end
     subgraph Outputs
