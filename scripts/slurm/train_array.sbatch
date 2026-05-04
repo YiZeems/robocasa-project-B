@@ -24,6 +24,7 @@ mkdir -p logs/slurm
 
 CONFIG_PATH="${CONFIG_PATH:-configs/train/open_single_door_ppo.yaml}"
 SEEDS_CSV="${SEEDS_CSV:-0,1,2}"
+RESUME_FROM="${RESUME_FROM:-}"
 echo "Config: ${CONFIG_PATH} | Seeds: ${SEEDS_CSV}"
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -46,4 +47,12 @@ fi
 SEED="${SEEDS[$IDX]}"
 echo "Running seed ${SEED} (array index ${IDX})"
 
-uv run python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"
+if [ -n "${RESUME_FROM}" ]; then
+  echo "Resuming from ${RESUME_FROM}"
+  uv run python -m robocasa_telecom.train \
+    --config "${CONFIG_PATH}" \
+    --seed "${SEED}" \
+    --resume-from "${RESUME_FROM}"
+else
+  uv run python -m robocasa_telecom.train --config "${CONFIG_PATH}" --seed "${SEED}"
+fi

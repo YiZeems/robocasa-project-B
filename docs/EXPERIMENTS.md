@@ -124,6 +124,9 @@ checkpoints/<run_id>/
   best_model.zip               ← meilleur succès validation (à utiliser pour le rapport)
   final_model.zip              ← état final
   <algo>_<step>_steps.zip      ← checkpoints périodiques
+  <algo>_<step>_steps_replay_buffer.pkl ← replay buffer SAC pour reprise
+  <algo>_<step>_steps.json     ← métadonnées de reprise du checkpoint
+  final_model.json             ← métadonnées du checkpoint final
 ```
 
 ## 7. Métriques de comparaison (à reporter dans le rapport)
@@ -147,6 +150,9 @@ Le surentraînement est signalé si l'une des conditions est vraie :
 - `train_reward` croît mais `test_success_rate` baisse
 
 Le rapport doit comparer **best validation** (stocké dans `best_model.zip`) vs **final** pour exhiber l'écart.
+
+Les checkpoints périodiques peuvent être repris via `--resume-from
+checkpoints/<run_id>/` ou un fichier `*_steps.zip`.
 
 ## 9. Planning calendaire (rappel)
 
