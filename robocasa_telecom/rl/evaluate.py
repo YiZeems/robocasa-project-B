@@ -34,9 +34,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate RL checkpoint on RoboCasa")
     parser.add_argument("--config", required=True, help="Path to train YAML config")
     parser.add_argument("--checkpoint", required=True, help="Path to .zip checkpoint")
-    parser.add_argument("--num-episodes", type=int, default=20, help="Evaluation episodes")
-    parser.add_argument("--seed", type=int, default=0, help="Base seed for evaluation rollouts")
-    parser.add_argument("--deterministic", action="store_true", help="Deterministic policy")
+    parser.add_argument(
+        "--num-episodes", type=int, default=20, help="Evaluation episodes"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="Base seed for evaluation rollouts"
+    )
+    parser.add_argument(
+        "--deterministic", action="store_true", help="Deterministic policy"
+    )
     parser.add_argument("--output", default=None, help="Optional output JSON path")
     parser.add_argument(
         "--algorithm",
@@ -66,7 +72,9 @@ def parse_args() -> argparse.Namespace:
         default="robot0_agentview_center,robot0_eye_in_hand,frontview,sideview",
         help="Comma-separated list of 4 camera names used for the MP4 mosaic",
     )
-    parser.add_argument("--video-fps", type=int, default=20, help="FPS for exported MP4 files")
+    parser.add_argument(
+        "--video-fps", type=int, default=20, help="FPS for exported MP4 files"
+    )
     return parser.parse_args()
 
 
@@ -76,7 +84,9 @@ def _resolve_algorithm(cfg: dict[str, Any], override: str | None) -> str:
     raw = override or cfg.get("train", {}).get("algorithm") or "PPO"
     algo = str(raw).upper()
     if algo not in SUPPORTED_ALGOS:
-        raise ValueError(f"Unsupported algorithm '{algo}'. Choose one of: {SUPPORTED_ALGOS}")
+        raise ValueError(
+            f"Unsupported algorithm '{algo}'. Choose one of: {SUPPORTED_ALGOS}"
+        )
     return algo
 
 
@@ -154,13 +164,15 @@ def main() -> None:
     args = parse_args()
 
     cfg = load_yaml(args.config)
-    env_cfg_path = cfg.get("env", {}).get("config_path", "configs/env/open_single_door.yaml")
+    env_cfg_path = cfg.get("env", {}).get(
+        "config_path", "configs/env/open_single_door.yaml"
+    )
     env_cfg = load_env_config(env_cfg_path)
-    out_root = ensure_dir(Path(cfg.get("paths", {}).get("output_root", "outputs")) / "eval")
+    out_root = ensure_dir(
+        Path(cfg.get("paths", {}).get("output_root", "outputs")) / "eval"
+    )
     video_root = ensure_dir(
-        Path(args.video_output_dir)
-        if args.video_output_dir
-        else out_root / "videos"
+        Path(args.video_output_dir) if args.video_output_dir else out_root / "videos"
     )
     explicit_cameras = [
         camera.strip()
@@ -178,7 +190,9 @@ def main() -> None:
 
     # Initialize MLflow for evaluation logging
     mlflow.set_experiment(f"RoboCasa-{env_cfg.task}-Eval")
-    eval_run_name = f"eval_{algorithm}_{args.split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    eval_run_name = (
+        f"eval_{algorithm}_{args.split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
     mlflow.start_run(run_name=eval_run_name)
 
     # Log evaluation parameters
@@ -209,7 +223,9 @@ def main() -> None:
             action, _state = model.predict(obs, deterministic=bool(args.deterministic))
 
             if int(args.video_every) > 0 and ep % int(args.video_every) == 0:
-                camera_frames = [_render_camera_frame(env, camera) for camera in video_cameras]
+                camera_frames = [
+                    _render_camera_frame(env, camera) for camera in video_cameras
+                ]
                 episode_frames.append(grid_2x2(camera_frames))
 
             obs, reward, terminated, truncated, info = env.step(action)
@@ -221,7 +237,10 @@ def main() -> None:
         successes.append(float(ep_success))
 
         if episode_frames:
-            video_path = video_root / f"eval_ep{ep:03d}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+            video_path = (
+                video_root
+                / f"eval_ep{ep:03d}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+            )
             save_mp4(episode_frames, video_path, fps=int(args.video_fps))
 
     metrics = {
@@ -251,7 +270,10 @@ def main() -> None:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        output_path = out_root / f"eval_{algorithm}_{args.split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        output_path = (
+            out_root
+            / f"eval_{algorithm}_{args.split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
