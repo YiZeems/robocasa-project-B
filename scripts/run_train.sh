@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local wrapper: run training via with_env (cross-shell / OS-friendly).
+# Local wrapper: run training via uv (cross-shell / OS-friendly).
 set -euo pipefail
 
 CONFIG_PATH="${1:-configs/train/open_single_door_ppo.yaml}"

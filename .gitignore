@@ -19,4 +19,7 @@ external/
 # OS
 .DS_Store
 
+# IDE
+.vscode/
+
 *.egg-info/
