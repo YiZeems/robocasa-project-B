@@ -55,6 +55,10 @@ uv run python -m robocasa_telecom.train \
 
 Le wrapper `scripts/run_train.sh` accepte aussi un 3e argument `RESUME_FROM`.
 
+Sans `--resume-from`, l’entraînement active `--auto-resume` par défaut et
+reprend le dernier run interrompu correspondant au même `task/algo/seed`.
+Utilise `--no-auto-resume` pour forcer un départ depuis zéro.
+
 ## Eval
 
 ```bash

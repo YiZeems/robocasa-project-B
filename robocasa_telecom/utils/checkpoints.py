@@ -22,6 +22,14 @@ class CheckpointArtifact:
     step: int | None = None
 
 
+@dataclass(frozen=True)
+class ResumeCandidate:
+    """A checkpoint artifact associated with a run directory."""
+
+    artifact: CheckpointArtifact
+    run_dir: Path
+
+
 def checkpoint_step(path: Path) -> int | None:
     """Extract the training step from a checkpoint filename."""
 
@@ -100,6 +108,75 @@ def resolve_checkpoint_artifact(path: str | Path) -> CheckpointArtifact:
         metadata_path=metadata_path,
         step=checkpoint_step(model_path),
     )
+
+
+def _run_is_complete(run_dir: Path) -> bool:
+    """Best-effort test for whether a run already finished."""
+
+    summary_path = run_dir / "train_summary.json"
+    final_model_path = run_dir / "final_model.zip"
+    if not summary_path.exists() or not final_model_path.exists():
+        return False
+
+    try:
+        with summary_path.open("r", encoding="utf-8") as f:
+            summary = json.load(f)
+    except Exception:
+        return False
+
+    if not isinstance(summary, dict):
+        return False
+
+    try:
+        completed = int(summary.get("completed_timesteps", -1))
+        target = int(summary.get("total_timesteps", -1))
+    except (TypeError, ValueError):
+        return False
+
+    return completed >= 0 and target >= 0 and completed >= target
+
+
+def find_latest_resume_candidate(
+    checkpoint_root: str | Path,
+    run_prefix: str,
+) -> ResumeCandidate | None:
+    """Find the latest incomplete run matching `run_prefix`."""
+
+    root = Path(checkpoint_root).expanduser().resolve()
+    if not root.exists():
+        return None
+
+    candidates: list[tuple[float, int, str, ResumeCandidate]] = []
+    for run_dir in root.glob(f"{run_prefix}*"):
+        if not run_dir.is_dir():
+            continue
+        if _run_is_complete(run_dir):
+            continue
+
+        try:
+            artifact = resolve_checkpoint_artifact(run_dir)
+        except FileNotFoundError:
+            continue
+
+        try:
+            run_mtime = run_dir.stat().st_mtime
+        except OSError:
+            run_mtime = 0.0
+
+        candidates.append(
+            (
+                run_mtime,
+                artifact.step if artifact.step is not None else -1,
+                run_dir.name,
+                ResumeCandidate(artifact=artifact, run_dir=run_dir),
+            )
+        )
+
+    if not candidates:
+        return None
+
+    _, _, _, candidate = max(candidates)
+    return candidate
 
 
 def load_checkpoint_metadata(path: str | Path) -> dict[str, Any]:

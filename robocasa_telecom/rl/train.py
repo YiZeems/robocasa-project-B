@@ -27,6 +27,7 @@ from stable_baselines3.common.monitor import Monitor
 
 from ..utils.checkpoints import (
     CheckpointArtifact,
+    find_latest_resume_candidate,
     load_checkpoint_metadata,
     resolve_checkpoint_artifact,
     save_checkpoint_metadata,
@@ -62,6 +63,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Resume training from a checkpoint zip, checkpoint directory, or checkpoint metadata JSON.",
     )
+    parser.add_argument(
+        "--auto-resume",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Automatically resume from the latest incomplete run matching the same task/algo/seed.",
+    )
     return parser.parse_args()
 
 
@@ -79,6 +86,7 @@ class RunContext:
     run_id: str
     resume_from: str | None
     resume_artifact: CheckpointArtifact | None
+    auto_resume: bool
 
 
 def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> RunContext:
@@ -114,7 +122,20 @@ def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> RunCo
         resume_artifact = resolve_checkpoint_artifact(resume_from)
         run_id = resume_artifact.model_path.parent.name
     else:
-        run_id = f"{env_cfg.task}_{algorithm}_seed{seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if bool(getattr(args, "auto_resume", True)):
+            run_prefix = f"{env_cfg.task}_{algorithm}_seed{seed}_"
+            candidate = find_latest_resume_candidate(
+                paths_cfg.get("checkpoint_root", "checkpoints"),
+                run_prefix,
+            )
+            if candidate is not None:
+                resume_artifact = candidate.artifact
+                resume_from = str(candidate.run_dir)
+                run_id = candidate.run_dir.name
+            else:
+                run_id = f"{env_cfg.task}_{algorithm}_seed{seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        else:
+            run_id = f"{env_cfg.task}_{algorithm}_seed{seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     return RunContext(
         env_cfg=env_cfg,
@@ -127,6 +148,7 @@ def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> RunCo
         run_id=run_id,
         resume_from=resume_from,
         resume_artifact=resume_artifact,
+        auto_resume=bool(getattr(args, "auto_resume", True)),
     )
 
 
@@ -701,6 +723,7 @@ def main() -> None:
         mlflow.log_param("seed", ctx.seed)
         mlflow.log_param("total_timesteps", ctx.total_timesteps)
         mlflow.log_param("task", ctx.env_cfg.task)
+        mlflow.log_param("auto_resume", ctx.auto_resume)
         mlflow.log_param("resume_mode", ctx.resume_artifact is not None)
         mlflow.log_param("resume_from", ctx.resume_from or "")
         mlflow.log_param("eval_freq", int(ctx.eval_cfg.get("eval_freq", 0)))
@@ -829,6 +852,7 @@ def main() -> None:
             "seed": ctx.seed,
             "total_timesteps": ctx.total_timesteps,
             "completed_timesteps": final_step,
+            "auto_resume": ctx.auto_resume,
             "resume_mode": ctx.resume_artifact is not None,
             "resume_from": ctx.resume_from,
             "resume_start_timesteps": resume_start_timesteps,
