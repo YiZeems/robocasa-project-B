@@ -71,7 +71,9 @@ class RunContext:
 def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> RunContext:
     """Resolve config-derived runtime context with CLI overrides."""
 
-    env_cfg_path = cfg.get("env", {}).get("config_path", "configs/env/open_single_door.yaml")
+    env_cfg_path = cfg.get("env", {}).get(
+        "config_path", "configs/env/open_single_door.yaml"
+    )
     env_cfg = load_env_config(env_cfg_path)
 
     train_cfg = cfg.get("train", {})
@@ -116,7 +118,9 @@ def _resolve_policy_kwargs(train_cfg: dict[str, Any]) -> dict[str, Any]:
     return policy_kwargs
 
 
-def _build_ppo(env: Monitor, train_cfg: dict[str, Any], tensorboard_root: Path, seed: int) -> PPO:
+def _build_ppo(
+    env: Monitor, train_cfg: dict[str, Any], tensorboard_root: Path, seed: int
+) -> PPO:
     """Instantiate PPO with hyperparameters from YAML."""
 
     policy_kwargs = _resolve_policy_kwargs(train_cfg)
@@ -141,7 +145,9 @@ def _build_ppo(env: Monitor, train_cfg: dict[str, Any], tensorboard_root: Path, 
     )
 
 
-def _build_sac(env: Monitor, train_cfg: dict[str, Any], tensorboard_root: Path, seed: int) -> SAC:
+def _build_sac(
+    env: Monitor, train_cfg: dict[str, Any], tensorboard_root: Path, seed: int
+) -> SAC:
     """Instantiate SAC with hyperparameters from YAML.
 
     `ent_coef` accepts numeric values, the literal string "auto", or strings of
@@ -195,7 +201,11 @@ def _build_model(
 
 
 def _evaluate_policy(
-    model: BaseAlgorithm, env: Any, episodes: int, seed: int = 0, deterministic: bool = True
+    model: BaseAlgorithm,
+    env: Any,
+    episodes: int,
+    seed: int = 0,
+    deterministic: bool = True,
 ) -> dict[str, float]:
     """Run a deterministic evaluation using the project success-detection logic."""
 
@@ -272,7 +282,9 @@ class ValidationCallback(BaseCallback):
 
     @property
     def best_return_mean(self) -> float:
-        return float(self._best_return_mean if np.isfinite(self._best_return_mean) else 0.0)
+        return float(
+            self._best_return_mean if np.isfinite(self._best_return_mean) else 0.0
+        )
 
     @property
     def best_step(self) -> int:
@@ -384,7 +396,9 @@ def main() -> None:
 
     output_root = ensure_dir(ctx.paths_cfg.get("output_root", "outputs"))
     checkpoint_root = ensure_dir(ctx.paths_cfg.get("checkpoint_root", "checkpoints"))
-    tensorboard_root = ensure_dir(ctx.paths_cfg.get("tensorboard_root", "logs/tensorboard"))
+    tensorboard_root = ensure_dir(
+        ctx.paths_cfg.get("tensorboard_root", "logs/tensorboard")
+    )
 
     run_output_dir = ensure_dir(output_root / ctx.run_id)
     run_checkpoint_dir = ensure_dir(checkpoint_root / ctx.run_id)
@@ -397,7 +411,9 @@ def main() -> None:
 
     # Log hyperparameters from train config
     for key, value in ctx.train_cfg.items():
-        if key not in ["policy_kwargs", "net_arch"] and not isinstance(value, (dict, list)):
+        if key not in ["policy_kwargs", "net_arch"] and not isinstance(
+            value, (dict, list)
+        ):
             try:
                 mlflow.log_param(f"train_{key}", value)
             except Exception:
@@ -408,7 +424,9 @@ def main() -> None:
     monitor_path = run_output_dir / "monitor.csv"
     train_env = Monitor(train_env, filename=str(monitor_path))
 
-    model = _build_model(ctx.algorithm, train_env, ctx.train_cfg, tensorboard_root, ctx.seed)
+    model = _build_model(
+        ctx.algorithm, train_env, ctx.train_cfg, tensorboard_root, ctx.seed
+    )
 
     callbacks: list[BaseCallback] = []
 
@@ -496,7 +514,9 @@ def main() -> None:
         json.dump(summary, f, indent=2)
 
     # Store resolved config for reproducibility and experiment tracing.
-    with (run_output_dir / "resolved_train_config.yaml").open("w", encoding="utf-8") as f:
+    with (run_output_dir / "resolved_train_config.yaml").open(
+        "w", encoding="utf-8"
+    ) as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
 
     # Log artifacts to MLflow
