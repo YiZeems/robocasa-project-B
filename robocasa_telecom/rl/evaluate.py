@@ -1,4 +1,10 @@
-"""Evaluation entrypoint for trained PPO checkpoints on RoboCasa."""
+"""Evaluation entrypoint for trained PPO/SAC checkpoints on RoboCasa.
+
+The script loads a checkpoint (algorithm auto-detected if not specified),
+runs `--num-episodes` rollouts, and exports aggregate metrics. It supports
+splitting evaluation seeds into validation / test buckets so the rapport can
+report the train/validation/test gap recommended in docs/EXPERIMENTS.md.
+"""
 
 from __future__ import annotations
 
@@ -6,9 +12,11 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, SAC
+from stable_baselines3.common.base_class import BaseAlgorithm
 
 from ..envs.factory import load_env_config, make_env_from_config
 from ..utils.io import ensure_dir, load_yaml
@@ -16,21 +24,36 @@ from ..utils.success import infer_success
 from ..utils.video import ensure_uint8_frame, grid_2x2, save_mp4
 
 
+SUPPORTED_ALGOS = ("PPO", "SAC")
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for evaluation."""
 
-    parser = argparse.ArgumentParser(description="Evaluate PPO checkpoint on RoboCasa")
+    parser = argparse.ArgumentParser(description="Evaluate RL checkpoint on RoboCasa")
     parser.add_argument("--config", required=True, help="Path to train YAML config")
     parser.add_argument("--checkpoint", required=True, help="Path to .zip checkpoint")
     parser.add_argument("--num-episodes", type=int, default=20, help="Evaluation episodes")
-    parser.add_argument("--seed", type=int, default=0, help="Seed for evaluation")
+    parser.add_argument("--seed", type=int, default=0, help="Base seed for evaluation rollouts")
     parser.add_argument("--deterministic", action="store_true", help="Deterministic policy")
     parser.add_argument("--output", default=None, help="Optional output JSON path")
+    parser.add_argument(
+        "--algorithm",
+        choices=list(SUPPORTED_ALGOS),
+        default=None,
+        help="Override algorithm declared in YAML (PPO or SAC). Defaults to the value in the config.",
+    )
+    parser.add_argument(
+        "--split",
+        choices=("validation", "test", "custom"),
+        default="custom",
+        help="Use a predeclared seed bucket from the YAML eval section instead of --seed",
+    )
     parser.add_argument(
         "--video-every",
         type=int,
         default=5,
-        help="Save a video every N episodes (set to 1 to save all episodes)",
+        help="Save a video every N episodes (set to 1 to save all episodes, 0 to disable)",
     )
     parser.add_argument(
         "--video-output-dir",
@@ -44,6 +67,41 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--video-fps", type=int, default=20, help="FPS for exported MP4 files")
     return parser.parse_args()
+
+
+def _resolve_algorithm(cfg: dict[str, Any], override: str | None) -> str:
+    """Pick algorithm from CLI override, then YAML, defaulting to PPO."""
+
+    raw = override or cfg.get("train", {}).get("algorithm") or "PPO"
+    algo = str(raw).upper()
+    if algo not in SUPPORTED_ALGOS:
+        raise ValueError(f"Unsupported algorithm '{algo}'. Choose one of: {SUPPORTED_ALGOS}")
+    return algo
+
+
+def _load_model(algorithm: str, checkpoint: str, device: str) -> BaseAlgorithm:
+    """Load a checkpoint with the matching SB3 class."""
+
+    if algorithm == "PPO":
+        return PPO.load(checkpoint, device=device)
+    if algorithm == "SAC":
+        return SAC.load(checkpoint, device=device)
+    raise ValueError(f"Unsupported algorithm: {algorithm}")
+
+
+def _resolve_seed_for_split(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
+    """Map --split to the seed buckets declared in the YAML eval section."""
+
+    if args.split == "custom":
+        return int(args.seed)
+    eval_cfg = cfg.get("eval", {})
+    key = "validation_seed" if args.split == "validation" else "test_seed"
+    seed_value = eval_cfg.get(key)
+    if seed_value is None:
+        raise ValueError(
+            f"Config does not declare 'eval.{key}'. Provide it in the YAML or use --split custom."
+        )
+    return int(seed_value)
 
 
 def _render_camera_frame(env, camera_name: str) -> np.ndarray:
@@ -90,7 +148,7 @@ def _resolve_video_cameras(env_cfg) -> tuple[str, str, str, str]:
 
 
 def main() -> None:
-    """Evaluate a PPO checkpoint and export aggregate metrics."""
+    """Evaluate an RL checkpoint and export aggregate metrics."""
 
     args = parse_args()
 
@@ -108,17 +166,26 @@ def main() -> None:
         for camera in str(args.video_cameras).split(",")
         if camera.strip()
     ]
-    video_cameras = tuple(explicit_cameras) if len(explicit_cameras) == 4 else _resolve_video_cameras(env_cfg)
+    video_cameras = (
+        tuple(explicit_cameras)
+        if len(explicit_cameras) == 4
+        else _resolve_video_cameras(env_cfg)
+    )
 
-    env = make_env_from_config(env_cfg, seed=args.seed)
-    model = PPO.load(args.checkpoint, device=cfg.get("train", {}).get("device", "auto"))
+    algorithm = _resolve_algorithm(cfg, args.algorithm)
+    seed = _resolve_seed_for_split(args, cfg)
 
-    returns = []
-    successes = []
+    env = make_env_from_config(env_cfg, seed=seed)
+    model = _load_model(
+        algorithm, args.checkpoint, device=cfg.get("train", {}).get("device", "auto")
+    )
+
+    returns: list[float] = []
+    successes: list[float] = []
 
     for ep in range(int(args.num_episodes)):
         # Offset seed by episode index to avoid replaying the exact same reset.
-        obs, _ = env.reset(seed=args.seed + ep)
+        obs, _ = env.reset(seed=seed + ep)
         done = False
         ep_ret = 0.0
         ep_success = False
@@ -145,6 +212,9 @@ def main() -> None:
 
     metrics = {
         "task": env_cfg.task,
+        "algorithm": algorithm,
+        "split": args.split,
+        "seed": int(seed),
         "checkpoint": str(Path(args.checkpoint).resolve()),
         "num_episodes": int(args.num_episodes),
         "return_mean": float(np.mean(returns)) if returns else 0.0,
@@ -158,7 +228,7 @@ def main() -> None:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        output_path = out_root / f"eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        output_path = out_root / f"eval_{algorithm}_{args.split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)

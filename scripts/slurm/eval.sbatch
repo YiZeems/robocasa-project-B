@@ -9,19 +9,25 @@
 #SBATCH --error=logs/slurm/%x-%A.err
 
 # SLURM evaluation job for a provided checkpoint path.
+# Algorithm and seed split are picked from the YAML pointed to by CONFIG_PATH.
+# Examples:
+#   sbatch --export=ALL,CHECKPOINT_PATH=checkpoints/<run>/best_model.zip \
+#          scripts/slurm/eval.sbatch
+#   sbatch --export=ALL,CONFIG_PATH=configs/train/open_single_door_sac.yaml,\
+# CHECKPOINT_PATH=checkpoints/<run>/best_model.zip,SPLIT=test scripts/slurm/eval.sbatch
 set -euo pipefail
 
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs/slurm outputs/eval
-REPO_ROOT="$(pwd)"
 
 CONFIG_PATH="${CONFIG_PATH:-configs/train/open_single_door_ppo.yaml}"
 NUM_EPISODES="${NUM_EPISODES:-20}"
 CHECKPOINT_PATH="${CHECKPOINT_PATH:-}"
+SPLIT="${SPLIT:-validation}"
 
 if [ -z "${CHECKPOINT_PATH}" ]; then
   echo "Please provide CHECKPOINT_PATH, e.g.:"
-  echo "sbatch --export=ALL,CHECKPOINT_PATH=checkpoints/<run>/final_model.zip scripts/slurm/eval.sbatch"
+  echo "sbatch --export=ALL,CHECKPOINT_PATH=checkpoints/<run>/best_model.zip scripts/slurm/eval.sbatch"
   exit 1
 fi
 
@@ -32,9 +38,11 @@ fi
 
 export UV_PROJECT_ENVIRONMENT="${SLURM_SUBMIT_DIR:-$PWD}/.venv"
 uv sync --python "${PYTHON_VERSION:-3.11}" >/dev/null
+echo "Config: ${CONFIG_PATH} | Checkpoint: ${CHECKPOINT_PATH} | Split: ${SPLIT}"
 
 uv run python -m robocasa_telecom.evaluate \
   --config "${CONFIG_PATH}" \
   --checkpoint "${CHECKPOINT_PATH}" \
   --num-episodes "${NUM_EPISODES}" \
+  --split "${SPLIT}" \
   --deterministic

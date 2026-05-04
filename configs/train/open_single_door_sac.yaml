@@ -11,27 +11,31 @@ env:
   config_path: configs/env/open_single_door.yaml
 
 train:
-  algorithm: PPO
+  algorithm: SAC
   policy: MlpPolicy
-  total_timesteps: 200000
-  n_steps: 2048
+  total_timesteps: 3000000
+
+  learning_rate: 3.0e-4
+  buffer_size: 1000000
   batch_size: 256
-  learning_rate: 0.0003
+  learning_starts: 10000
+  tau: 0.005
   gamma: 0.99
-  gae_lambda: 0.95
-  ent_coef: 0.0
-  vf_coef: 0.5
-  clip_range: 0.2
-  n_epochs: 10
+  train_freq: 1
+  gradient_steps: 1
+  ent_coef: auto
+  target_update_interval: 1
+  net_arch: [256, 256]
+
   seed: 0
-  save_freq_steps: 50000
+  save_freq_steps: 100000
   eval_episodes: 5
   device: auto
 
 eval:
-  eval_freq: 0
-  n_eval_episodes: 10
+  eval_freq: 25000
+  n_eval_episodes: 50
   validation_seed: 10000
   test_seed: 20000
-  early_stopping_patience: 0
+  early_stopping_patience: 20
   deterministic: true
