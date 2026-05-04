@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local wrapper: evaluate checkpoint via with_env (cross-shell / OS-friendly).
+# Local wrapper: evaluate checkpoint via uv run.
 set -euo pipefail
 
 CHECKPOINT_PATH="${1:-}"
@@ -14,7 +14,12 @@ fi
 
 cd "${REPO_ROOT}"
 
-exec scripts/with_env.sh python -m robocasa_telecom.evaluate \
+if ! command -v uv >/dev/null 2>&1; then
+  echo "Error: uv is not available in PATH."
+  exit 1
+fi
+
+exec uv run python -m robocasa_telecom.evaluate \
   --config "${CONFIG_PATH}" \
   --checkpoint "${CHECKPOINT_PATH}" \
   --num-episodes "${NUM_EPISODES}" \
