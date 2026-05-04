@@ -54,6 +54,7 @@ uv run python -m robocasa_telecom.train \
 ```
 
 Le wrapper `scripts/run_train.sh` accepte aussi un 3e argument `RESUME_FROM`.
+Il est conservé pour le confort, mais la commande standard reste `uv run`.
 
 Sans `--resume-from`, l’entraînement active `--auto-resume` par défaut et
 reprend le dernier run interrompu correspondant au même `task/algo/seed`.
@@ -68,6 +69,9 @@ uv run python -m robocasa_telecom.evaluate \
   --num-episodes 20 \
   --deterministic
 ```
+
+Le wrapper `scripts/run_eval.sh` existe aussi pour les usages rapides, mais
+`uv run` reste la voie recommandée.
 
 ## SLURM
 

@@ -195,12 +195,15 @@ make train-sac-tuned      # 2M    — variante (lr=1e-4, batch=512, ent=auto_0.2
 make train-ppo-baseline   # 5M    — baseline PPO
 ```
 
-Équivalent direct :
+Commande recommandée :
 
 ```bash
 uv run python -m robocasa_telecom.train \
   --config configs/train/open_single_door_sac.yaml --seed 0
 ```
+
+Le wrapper `scripts/run_train.sh` reste disponible, mais il n’est pas
+nécessaire si `uv` est déjà installé.
 
 Override CLI :
 
@@ -247,7 +250,7 @@ make eval-test \
   EPISODES=50
 ```
 
-CLI direct (avec export vidéo MP4 mosaïque 4 caméras) :
+CLI direct recommandé (avec export vidéo MP4 mosaïque 4 caméras) :
 
 ```bash
 uv run python -m robocasa_telecom.evaluate \
