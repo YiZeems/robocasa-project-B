@@ -12,6 +12,7 @@ __pycache__/
 logs/
 outputs/
 checkpoints/
+mlruns/
 
 # External dependencies
 external/

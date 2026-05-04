@@ -9,24 +9,19 @@
 
 ## 2) Méthode RL retenue
 
-### Algorithme principal: PPO (Stable-Baselines3)
+### Algorithme principal: SAC (Stable-Baselines3)
 
 Raisons:
-- baseline robuste et standard pour environnements continus,
-- implémentation fiable dans SB3,
-- bon compromis stabilité / simplicité pour projet académique.
+- off-policy et plus sample-efficient sur contrôle continu,
+- bonne adéquation avec la manipulation continue RoboCasa,
+- intégration stable dans SB3 avec replay buffer et reprise par checkpoints.
 
-Hyperparamètres configurés dans `configs/train/open_single_door_ppo.yaml`:
-- `policy: MlpPolicy`
-- `learning_rate`
-- `n_steps`
-- `batch_size`
-- `gamma`
-- `gae_lambda`
-- `clip_range`
-- `ent_coef`
-- `vf_coef`
-- `n_epochs`
+Baseline comparative:
+- PPO est conservé comme baseline on-policy via `configs/train/open_single_door_ppo_baseline.yaml`.
+
+Hyperparamètres configurés dans `configs/train/*.yaml`:
+- SAC: `learning_rate`, `buffer_size`, `learning_starts`, `batch_size`, `tau`, `gamma`, `train_freq`, `gradient_steps`, `ent_coef`.
+- PPO: `learning_rate`, `n_steps`, `batch_size`, `gamma`, `gae_lambda`, `clip_range`, `ent_coef`, `vf_coef`, `n_epochs`.
 
 ## 3) Représentation observation/action
 
@@ -35,9 +30,9 @@ Hyperparamètres configurés dans `configs/train/open_single_door_ppo.yaml`:
 
 ### Observation space
 - cas 1: wrapper gym robosuite stable (`GymWrapper`) -> observation native.
-- cas 2 (fallback): observation dict flattenée en vecteur 1D via `gymnasium.spaces.utils.flatten`.
+- cas 2 (fallback nominal sur cette stack): observation dict flattenée en vecteur 1D via `gymnasium.spaces.utils.flatten`.
 
-Ce fallback garantit la compatibilité SB3 quand les sorties dict changent entre versions RoboCasa/Robosuite.
+Le fallback garantit la compatibilité SB3 quand le `GymWrapper` renvoie une shape d'observation instable entre resets.
 
 ## 4) Détection du succès
 
@@ -60,10 +55,11 @@ Implémentation: `robocasa_telecom/rl/train.py`.
 2. création de l'environnement,
 3. instrumentation Monitor (`monitor.csv`),
 4. construction PPO,
-5. entraînement avec checkpoints périodiques,
-6. sauvegarde modèle final,
-7. mini-évaluation post-train,
-8. export `training_curve.csv` et `train_summary.json`.
+5. construction PPO ou SAC,
+6. entraînement avec checkpoints périodiques et validation,
+7. sauvegarde modèle final + métadonnées de reprise,
+8. mini-évaluation post-train,
+9. export `training_curve.csv`, `validation_curve.csv` et `train_summary.json`.
 
 ## 6) Pipeline évaluation
 
@@ -72,7 +68,7 @@ Implémentation: `robocasa_telecom/rl/evaluate.py`.
 Étapes:
 1. chargement config + checkpoint,
 2. rollouts sur `num_episodes`,
-3. agrégation `return_mean`, `return_std`, `success_rate`,
+3. agrégation `return_mean`, `return_std`, `success_rate`, `episode_length_*`, `action_magnitude_*`, `door_angle_final_*` si disponible,
 4. export JSON horodaté.
 
 ## 7) Reproductibilité
@@ -80,6 +76,8 @@ Implémentation: `robocasa_telecom/rl/evaluate.py`.
 Mécanismes appliqués:
 - seed explicite pour train/eval,
 - commits figés robocasa/robosuite dans le script de setup,
+- reprise possible depuis checkpoints périodiques + replay buffer SAC,
+- auto-resume du dernier run incomplet compatible,
 - sauvegarde du résumé JSON par run,
 - convention de nommage incluant seed et timestamp.
 
@@ -92,11 +90,11 @@ Mécanismes appliqués:
 ## 9) Limites connues
 
 - performance dépendante des assets et de la version MuJoCo/driver GPU,
-- instrumentation minimale (pas de tracking externe type Weights&Biases),
-- baseline PPO unique (pas encore de comparaison multi-algo).
+- warnings non bloquants `mink`, `mimicgen` et `gym` hérités des dépendances amont,
+- pas de benchmark multi-tâches à ce stade.
 
 ## 10) Extensions recommandées
 
-- ajouter SAC pour comparaison policy-gradient vs off-policy,
-- ajouter callbacks d'early stopping et normalisation d'observation,
+- ajouter normalisation d'observation et benchmarking multi-seeds automatisé,
+- ajouter comparaison image-based si la deadline le permet,
 - ajouter suite de benchmarks multi-tâches RoboCasa.

@@ -26,10 +26,28 @@ RUN_SETUP_MACROS=1 \
 bash scripts/setup_uv.sh
 ```
 
+Ce setup :
+- clone `external/robosuite` et `external/robocasa`,
+- installe le projet avec `uv sync`,
+- installe `robocasa` et `robosuite` depuis les sources locales déclarées dans `pyproject.toml`,
+- relie automatiquement `robocasa/models/assets` vers les assets du checkout externe si besoin,
+- vérifie les imports et la présence d'assets critiques.
+
 ## Validation
 
 ```bash
+make check
 uv run python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
+```
+
+Smoke train recommandé :
+
+```bash
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_sac_debug.yaml \
+  --seed 0 \
+  --total-timesteps 10 \
+  --no-auto-resume
 ```
 
 ## Train
@@ -60,6 +78,16 @@ Sans `--resume-from`, l’entraînement active `--auto-resume` par défaut et
 reprend le dernier run interrompu correspondant au même `task/algo/seed`.
 Utilise `--no-auto-resume` pour forcer un départ depuis zéro.
 
+Commandes utiles :
+
+```bash
+uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_debug.yaml --seed 0
+uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac.yaml --seed 0
+uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_tuned.yaml --seed 0
+uv run python -m robocasa_telecom.train --config configs/train/open_single_door_ppo.yaml --seed 0
+uv run python -m robocasa_telecom.train --config configs/train/open_single_door_ppo_baseline.yaml --seed 0
+```
+
 ## Eval
 
 ```bash
@@ -83,5 +111,6 @@ sbatch --export=ALL,CHECKPOINT_PATH=checkpoints/<run_id>/final_model.zip scripts
 ## Dépannage
 
 - Si `uv run` échoue, vérifiez que `.venv` a bien été créé par `scripts/setup_uv.sh`.
-- Si des assets manquent, relancez avec `DOWNLOAD_ASSETS=1 VERIFY_ASSETS=1`.
+- Si des assets manquent, relancez `bash scripts/setup_uv.sh` avec `DOWNLOAD_ASSETS=1 VERIFY_ASSETS=1`.
+- Si le `GymWrapper` RoboSuite donne une shape d'observation instable, le projet bascule automatiquement sur `RawRoboCasaAdapter`. Ce fallback est attendu.
 - Sur Windows, privilégiez WSL ou Git Bash.

@@ -16,7 +16,7 @@ sanity:
 	uv run python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
 
 check:
-	uv run python -m pip check
+	uv pip check
 	uv run python -m compileall robocasa_telecom tests
 
 tensorboard:

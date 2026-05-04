@@ -35,10 +35,11 @@
 
 ### `scripts/setup_uv.sh`
 - Rôle: bootstrap complet de l'environnement via `uv`.
-- Méthode: clone des externals, `uv sync`, installation editable des repos externes, téléchargement éventuel des assets.
+- Méthode: clone des externals, `uv sync`, installation des sources locales `robocasa` / `robosuite`, liaison ou téléchargement des assets, validation d'imports et d'assets.
 
 ### `scripts/with_env.sh`
 - Rôle: exécute une commande dans l'environnement `uv` du projet.
+- Usage: fallback; la voie standard documentée reste `uv run ...`.
 
 ### `scripts/run_train.sh`
 - Rôle: wrapper local pour l'entraînement.

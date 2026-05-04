@@ -9,7 +9,8 @@ Le pipeline GitHub Actions doit maintenant s'appuyer sur `uv` plutôt que sur Co
 Vérifications recommandées:
 - `uv sync`
 - `shellcheck` / validation syntaxe scripts shell
-- `python -m compileall`
+- `uv pip check`
+- `uv run python -m compileall robocasa_telecom tests`
 - test de chargement de config
 - vérification que le message d'erreur "assets manquants" reste explicite quand `DOWNLOAD_ASSETS=0`
 
@@ -18,7 +19,9 @@ Vérifications recommandées:
 Vérifications recommandées:
 - `DOWNLOAD_ASSETS=1`
 - `VERIFY_ASSETS=1`
+- `RUN_SETUP_MACROS=1`
 - lancement de `uv run python -m robocasa_telecom.sanity ...`
+- smoke train court: `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_debug.yaml --seed 0 --total-timesteps 10 --no-auto-resume`
 
 ## Setup local recommandé
 

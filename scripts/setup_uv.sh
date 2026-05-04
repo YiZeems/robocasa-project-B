@@ -53,8 +53,30 @@ git -C external/robocasa fetch --all --tags --prune
 git -C external/robocasa checkout "${ROBOCASA_COMMIT}"
 
 uv sync --python "${PYTHON_VERSION}"
-uv pip install -e external/robosuite
-uv pip install -e external/robocasa
+
+INSTALLED_ROBOCASA_DIR="$(uv run python - <<'PY'
+from importlib.util import find_spec
+from pathlib import Path
+
+spec = find_spec("robocasa")
+if spec is None or spec.origin is None:
+    raise SystemExit("ERROR: robocasa is not importable after uv sync")
+print(Path(spec.origin).resolve().parent)
+PY
+)"
+EXTERNAL_ROBOCASA_DIR="${REPO_ROOT}/external/robocasa/robocasa"
+INSTALLED_ASSETS_DIR="${INSTALLED_ROBOCASA_DIR}/models/assets"
+EXTERNAL_ASSETS_DIR="${EXTERNAL_ROBOCASA_DIR}/models/assets"
+
+if [ ! -e "${INSTALLED_ASSETS_DIR}" ] && [ -d "${EXTERNAL_ASSETS_DIR}" ]; then
+  mkdir -p "$(dirname "${INSTALLED_ASSETS_DIR}")"
+  ln -s "${EXTERNAL_ASSETS_DIR}" "${INSTALLED_ASSETS_DIR}"
+  echo "Linked RoboCasa assets from external checkout."
+fi
+
+if [ ! -e "${INSTALLED_ASSETS_DIR}" ]; then
+  echo "WARNING: RoboCasa assets are still missing at ${INSTALLED_ASSETS_DIR}"
+fi
 
 if [ "${RUN_SETUP_MACROS}" = "1" ]; then
   if ! yes y | uv run python -m robocasa.scripts.setup_macros; then
@@ -64,9 +86,10 @@ fi
 
 if [ "${DOWNLOAD_ASSETS}" = "1" ]; then
   yes y | uv run python -m robocasa.scripts.download_kitchen_assets --type all
+fi
 
-  if [ "${VERIFY_ASSETS}" = "1" ]; then
-    uv run python - <<'PY'
+if [ "${VERIFY_ASSETS}" = "1" ]; then
+  uv run python - <<'PY'
 from pathlib import Path
 import sys
 import robocasa
@@ -97,7 +120,6 @@ for directory in required_dirs:
 
 print("Asset validation passed.")
 PY
-  fi
 fi
 
 if [ "${DOWNLOAD_DATASETS}" = "1" ]; then
