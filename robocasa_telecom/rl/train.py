@@ -24,6 +24,7 @@ from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 
 from ..utils.checkpoints import (
     CheckpointArtifact,
@@ -162,8 +163,23 @@ def _resolve_policy_kwargs(train_cfg: dict[str, Any]) -> dict[str, Any]:
     return policy_kwargs
 
 
+class MLflowMetricsCallback(BaseCallback):
+    """Forward SB3 rollout/train logger entries to the active MLflow run."""
+
+    def _on_step(self) -> bool:
+        if self.logger is None:
+            return True
+        for key, value in self.logger.name_to_value.items():
+            if isinstance(value, (int, float)):
+                try:
+                    mlflow.log_metric(key, float(value), step=self.num_timesteps)
+                except Exception:
+                    pass
+        return True
+
+
 def _build_ppo(
-    env: Monitor, train_cfg: dict[str, Any], tensorboard_root: Path, seed: int
+    env: Monitor, train_cfg: dict[str, Any], seed: int
 ) -> PPO:
     """Instantiate PPO with hyperparameters from YAML."""
 
@@ -181,16 +197,16 @@ def _build_ppo(
         vf_coef=float(train_cfg.get("vf_coef", 0.5)),
         max_grad_norm=float(train_cfg.get("max_grad_norm", 0.5)),
         n_epochs=int(train_cfg.get("n_epochs", 10)),
-        tensorboard_log=str(tensorboard_root),
+        tensorboard_log=None,
         policy_kwargs=policy_kwargs or None,
         seed=seed,
         device=train_cfg.get("device", "auto"),
-        verbose=1,
+        verbose=0,
     )
 
 
 def _build_sac(
-    env: Monitor, train_cfg: dict[str, Any], tensorboard_root: Path, seed: int
+    env: Monitor, train_cfg: dict[str, Any], seed: int
 ) -> SAC:
     """Instantiate SAC with hyperparameters from YAML.
 
@@ -220,11 +236,11 @@ def _build_sac(
         ent_coef=ent_coef,
         target_update_interval=int(train_cfg.get("target_update_interval", 1)),
         target_entropy=train_cfg.get("target_entropy", "auto"),
-        tensorboard_log=str(tensorboard_root),
+        tensorboard_log=None,
         policy_kwargs=policy_kwargs or None,
         seed=seed,
         device=train_cfg.get("device", "auto"),
-        verbose=1,
+        verbose=0,
     )
 
 
@@ -232,15 +248,14 @@ def _build_model(
     algorithm: str,
     env: Monitor,
     train_cfg: dict[str, Any],
-    tensorboard_root: Path,
     seed: int,
 ) -> BaseAlgorithm:
     """Dispatch model construction by algorithm name."""
 
     if algorithm == "PPO":
-        return _build_ppo(env, train_cfg, tensorboard_root, seed)
+        return _build_ppo(env, train_cfg, seed)
     if algorithm == "SAC":
-        return _build_sac(env, train_cfg, tensorboard_root, seed)
+        return _build_sac(env, train_cfg, seed)
     raise ValueError(f"Unsupported algorithm: {algorithm}")
 
 
@@ -643,21 +658,18 @@ def _set_model_num_timesteps(model: BaseAlgorithm, num_timesteps: int) -> None:
 def _build_model_for_resume(
     ctx: RunContext,
     train_env: Monitor,
-    tensorboard_root: Path,
     resume_artifact: CheckpointArtifact | None,
 ) -> BaseAlgorithm:
     """Create or resume a model, restoring replay buffer when available."""
 
     device = ctx.train_cfg.get("device", "auto")
     if resume_artifact is None:
-        return _build_model(
-            ctx.algorithm, train_env, ctx.train_cfg, tensorboard_root, ctx.seed
-        )
+        return _build_model(ctx.algorithm, train_env, ctx.train_cfg, ctx.seed)
 
     load_kwargs = {
         "env": train_env,
         "device": device,
-        "tensorboard_log": str(tensorboard_root),
+        "tensorboard_log": None,
         "print_system_info": False,
     }
     if ctx.algorithm == "PPO":
@@ -679,6 +691,42 @@ def _build_model_for_resume(
     return model
 
 
+def _make_vec_env(
+    env_cfg: EnvConfig,
+    n_envs: int,
+    base_seed: int,
+    monitor_dir: Path,
+    reference_obs_space: Any = None,
+) -> Any:
+    """Build a SubprocVecEnv with n_envs parallel workers.
+
+    Each worker gets a unique seed (base_seed + worker_index) so scenes differ.
+    Monitor CSVs are written per-worker inside monitor_dir.
+    """
+    monitor_dir.mkdir(parents=True, exist_ok=True)
+
+    def _make_env(rank: int):
+        def _init():
+            env = make_env_from_config(
+                env_cfg,
+                seed=base_seed + rank,
+                reference_obs_space=reference_obs_space,
+            )
+            env = Monitor(env, filename=str(monitor_dir / f"worker_{rank}"))
+            return env
+        return _init
+
+    if n_envs == 1:
+        single = _make_env(0)()
+        from stable_baselines3.common.vec_env import DummyVecEnv
+        return DummyVecEnv([lambda: single])
+
+    return SubprocVecEnv(
+        [_make_env(i) for i in range(n_envs)],
+        start_method="fork",  # fork is safe on macOS/Linux; avoids re-importing heavy libs
+    )
+
+
 def main() -> None:
     """Train an RL model and export reproducible artifacts."""
 
@@ -688,25 +736,29 @@ def main() -> None:
 
     output_root = ensure_dir(ctx.paths_cfg.get("output_root", "outputs"))
     checkpoint_root = ensure_dir(ctx.paths_cfg.get("checkpoint_root", "checkpoints"))
-    tensorboard_root = ensure_dir(
-        ctx.paths_cfg.get("tensorboard_root", "logs/tensorboard")
-    )
 
     run_output_dir = ensure_dir(output_root / ctx.run_id)
     run_checkpoint_dir = ensure_dir(checkpoint_root / ctx.run_id)
 
-    train_env = make_env_from_config(ctx.env_cfg, seed=ctx.seed)
+    n_envs = int(ctx.train_cfg.get("n_envs", 1))
+
+    # Build a single env first to fix the obs space, then use it as reference
+    # for all parallel workers so every worker has the same obs shape.
+    _ref_env = make_env_from_config(ctx.env_cfg, seed=ctx.seed)
+    reference_obs_space = _ref_env.observation_space
+    _ref_env.close()
+
+    monitor_dir = run_output_dir / "monitors"
+    train_env = _make_vec_env(
+        ctx.env_cfg,
+        n_envs=n_envs,
+        base_seed=ctx.seed,
+        monitor_dir=monitor_dir,
+        reference_obs_space=reference_obs_space,
+    )
+    # VecMonitor aggregates episode stats from all workers for SB3 logging.
     monitor_path = run_output_dir / "monitor.csv"
-    monitor_override_existing = not (
-        ctx.resume_artifact is not None
-        and monitor_path.exists()
-        and monitor_path.stat().st_size > 0
-    )
-    train_env = Monitor(
-        train_env,
-        filename=str(monitor_path),
-        override_existing=monitor_override_existing,
-    )
+    train_env = VecMonitor(train_env, filename=str(monitor_path))
     model: BaseAlgorithm | None = None
     val_callback: ValidationCallback | None = None
     summary: dict[str, Any] = {}
@@ -743,9 +795,7 @@ def main() -> None:
                 except Exception:
                     pass  # Skip non-serializable params
 
-        model = _build_model_for_resume(
-            ctx, train_env, tensorboard_root, ctx.resume_artifact
-        )
+        model = _build_model_for_resume(ctx, train_env, ctx.resume_artifact)
         resume_start_timesteps = 0
         if ctx.resume_artifact is not None:
             resume_metadata = load_checkpoint_metadata(ctx.resume_artifact.model_path)
@@ -764,7 +814,7 @@ def main() -> None:
         remaining_timesteps = max(0, int(ctx.total_timesteps) - resume_start_timesteps)
         final_step = resume_start_timesteps
 
-        callbacks: list[BaseCallback] = []
+        callbacks: list[BaseCallback] = [MLflowMetricsCallback()]
 
         save_freq_steps = int(ctx.train_cfg.get("save_freq_steps", 50_000))
         if save_freq_steps > 0:
@@ -784,7 +834,11 @@ def main() -> None:
             validation_seed = int(
                 ctx.eval_cfg.get("validation_seed", ctx.seed + 10_000)
             )
-            val_env = make_env_from_config(ctx.env_cfg, seed=validation_seed)
+            val_env = make_env_from_config(
+                ctx.env_cfg,
+                seed=validation_seed,
+                reference_obs_space=train_env.observation_space,
+            )
             val_callback = ValidationCallback(
                 eval_env=val_env,
                 eval_freq=eval_freq,

@@ -39,3 +39,4 @@ robocasa-telecom-sanity = "robocasa_telecom.sanity:main"
 [tool.uv.sources]
 robocasa = { path = "external/robocasa" }
 robosuite = { path = "external/robosuite" }
+
