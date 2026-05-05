@@ -21,3 +21,19 @@ env:
     - objaverse
 
   ignore_done: false
+
+reward:
+  # Component weights — success must dominate approach to prevent hover hacking
+  w_approach: 0.05      # small: guide toward handle but don't reward hovering
+  w_progress: 1.0       # main learning signal (high-watermark, anti-oscillation)
+  w_success: 5.0        # sparse bonus dominates all intermediate rewards
+  w_action_reg: 0.01    # penalise large/jerky actions
+  w_stagnation: 0.05    # penalise proximity without progress (conditional)
+  w_wrong_dir: 0.3      # penalise moving the door backward
+
+  # Thresholds
+  theta_success: 0.90   # normalised opening — matches RoboCasa fxtr.is_open(th=0.90)
+  d_max: 0.5            # approach reward goes to 0 beyond 0.5m from handle
+  d_prox: 0.12          # "robot is close" threshold for stagnation penalty (m)
+  stagnation_n: 50      # steps near handle with no new progress → penalty fires
+  tol_wrong_dir: 0.02   # tolerance below high-watermark before wrong-dir fires

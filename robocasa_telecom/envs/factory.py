@@ -6,11 +6,13 @@ instantiation path, with explicit fallbacks for version and wrapper differences.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from .reward import AntiHackingReward, RewardConfig
 
 try:
     import gymnasium as gym
@@ -45,6 +47,7 @@ class EnvConfig:
     ignore_done: bool = False
     obj_registries: tuple[str, ...] = ("objaverse",)
     use_gym_wrapper: bool = False
+    reward_cfg: dict[str, Any] = field(default_factory=dict)
 
 
 if gym is not None:
@@ -130,7 +133,13 @@ class RawRoboCasaAdapter(_GymEnvBase):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
-    def __init__(self, raw_env: Any, horizon: int, reference_obs_space: Any = None):
+    def __init__(
+        self,
+        raw_env: Any,
+        horizon: int,
+        reference_obs_space: Any = None,
+        reward_cfg: dict[str, Any] | None = None,
+    ):
         if spaces is None or space_utils is None:
             raise ModuleNotFoundError(
                 "gymnasium is required to build RoboCasa adapters. "
@@ -141,6 +150,9 @@ class RawRoboCasaAdapter(_GymEnvBase):
         self.raw_env = raw_env
         self._horizon = int(horizon)
         self._episode_steps = 0
+        self._reward_shaper = AntiHackingReward(
+            RewardConfig.from_dict(reward_cfg or {})
+        )
 
         first_obs = self.raw_env.reset()
         if isinstance(first_obs, tuple):
@@ -247,46 +259,39 @@ class RawRoboCasaAdapter(_GymEnvBase):
         flat = space_utils.flatten(self._dict_space, aligned)
         return np.asarray(flat, dtype=np.float32)
 
-    def _shaped_reward(self, raw_obs: Any, sparse_reward: float) -> float:
-        """Dense reward shaping using RoboCasa's fixture API.
-
-        Components (all in [0, 1] range before scaling):
-          1. reaching  — exp(-3*dist(EEF, door)) encourages approach
-          2. opening   — fxtr.get_door_state() gives normalised [0,1] opening
-          3. success   — sparse bonus amplified ×10
-        """
-        reward = sparse_reward * 10.0
-
-        if not isinstance(raw_obs, dict):
-            return reward
-
-        # 1. Reaching reward via obs key set by RoboCasa.
-        eef_to_door = raw_obs.get("door_obj_to_robot0_eef_pos")
-        if eef_to_door is not None:
-            dist = float(np.linalg.norm(eef_to_door))
-            reward += float(np.exp(-3.0 * dist)) * 0.5
-
-        # 2. Opening reward via fixture API (normalised 0→closed, 1→fully open).
+    def _extract_theta(self) -> float:
+        """Normalised door opening [0=closed, 1=open] via RoboCasa fixture API."""
         fxtr = getattr(self.raw_env, "fxtr", None)
-        if fxtr is not None:
-            try:
-                joint_names = getattr(fxtr, "door_joint_names", None)
-                if joint_names:
-                    door_state = fxtr.get_joint_state(self.raw_env, joint_names)
-                    opening = float(max(door_state.values())) if door_state else 0.0
-                else:
-                    opening = 0.0
-            except Exception:
-                opening = 0.0
-            reward += opening * 2.0
+        if fxtr is None:
+            return 0.0
+        try:
+            joint_names = getattr(fxtr, "door_joint_names", None)
+            if not joint_names:
+                return 0.0
+            door_state = fxtr.get_joint_state(self.raw_env, joint_names)
+            return float(max(door_state.values())) if door_state else 0.0
+        except Exception:
+            return 0.0
 
-        return reward
+    def _extract_d_ee_handle(self, raw_obs: Any) -> float:
+        """Distance EEF → door/handle (m) from observation dict."""
+        if not isinstance(raw_obs, dict):
+            return 1.0
+        vec = raw_obs.get("door_obj_to_robot0_eef_pos")
+        if vec is not None:
+            return float(np.linalg.norm(vec))
+        # Fallback: try any key that has "eef_pos" and "door" in its name.
+        for key, val in raw_obs.items():
+            if "eef_pos" in key and "door" in key:
+                return float(np.linalg.norm(val))
+        return 1.0
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         """Reset raw env and return flattened observation."""
 
         del options
         self._episode_steps = 0
+        self._reward_shaper.reset()
         try:
             out = self.raw_env.reset(seed=seed)
         except TypeError:
@@ -315,11 +320,25 @@ class RawRoboCasaAdapter(_GymEnvBase):
             raise RuntimeError(f"Unexpected step() tuple length: {len(out)}")
 
         self._episode_steps += 1
+        done = terminated or truncated
         if self._episode_steps >= self._horizon and not terminated:
             truncated = True
+            done = True
 
-        shaped = self._shaped_reward(obs, float(reward))
-        return self._flatten_obs(obs), shaped, terminated, truncated, dict(info or {})
+        theta = self._extract_theta()
+        d_ee = self._extract_d_ee_handle(obs)
+        shaped, components = self._reward_shaper.compute(
+            theta=theta,
+            d_ee_handle=d_ee,
+            action=np.asarray(action, dtype=np.float32),
+        )
+
+        step_info = dict(info or {})
+        step_info["reward_components"] = components
+        if done:
+            step_info["episode_reward_components"] = self._reward_shaper.episode_summary()
+
+        return self._flatten_obs(obs), shaped, terminated, truncated, step_info
 
     def render(self):
         return self.raw_env.render()
@@ -415,6 +434,7 @@ def load_env_config(path: str | Path) -> EnvConfig:
         ignore_done=bool(env_data.get("ignore_done", False)),
         obj_registries=obj_registries,
         use_gym_wrapper=bool(env_data.get("use_gym_wrapper", False)),
+        reward_cfg=dict(data.get("reward", {})),
     )
 
 
@@ -505,7 +525,12 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None, reference_
                 # Fallback to raw adapter if GymWrapper breaks on a version combination.
                 env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
         else:
-            env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon, reference_obs_space=reference_obs_space)
+            env = RawRoboCasaAdapter(
+                raw_env=raw_env,
+                horizon=env_cfg.horizon,
+                reference_obs_space=reference_obs_space,
+                reward_cfg=env_cfg.reward_cfg or {},
+            )
     except FileNotFoundError as exc:
         raise RuntimeError(
             "RoboCasa assets are missing. Run setup with DOWNLOAD_ASSETS=1 "
