@@ -130,7 +130,7 @@ class RawRoboCasaAdapter(_GymEnvBase):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
-    def __init__(self, raw_env: Any, horizon: int):
+    def __init__(self, raw_env: Any, horizon: int, reference_obs_space: Any = None):
         if spaces is None or space_utils is None:
             raise ModuleNotFoundError(
                 "gymnasium is required to build RoboCasa adapters. "
@@ -153,8 +153,21 @@ class RawRoboCasaAdapter(_GymEnvBase):
             dtype=np.float32,
         )
 
-        self._obs_keys, self._dict_space = self._build_dict_space(first_obs)
-        self.observation_space = space_utils.flatten_space(self._dict_space)
+        if reference_obs_space is not None:
+            # Lock obs space to the reference (train env) so val/test envs
+            # produce the exact same flat shape regardless of scene variation.
+            self.observation_space = reference_obs_space
+            ref_size = int(np.prod(reference_obs_space.shape))
+            self._obs_keys = ("_flat",)
+            self._dict_space = spaces.Dict(
+                {"_flat": spaces.Box(low=-np.inf, high=np.inf, shape=(ref_size,), dtype=np.float32)}
+            )
+            self._reference_size = ref_size
+        else:
+            self._obs_keys, self._dict_space = self._build_dict_space(first_obs)
+            self.observation_space = space_utils.flatten_space(self._dict_space)
+            self._reference_size = None
+
 
     @staticmethod
     def _select_obs(obs: Any) -> dict[str, np.ndarray]:
@@ -196,6 +209,21 @@ class RawRoboCasaAdapter(_GymEnvBase):
     def _flatten_obs(self, obs: Any) -> np.ndarray:
         """Flatten observations while keeping a fixed key order across resets/episodes."""
 
+        if self._reference_size is not None:
+            # Reference mode: produce a fixed-size flat vector regardless of
+            # the current scene's obs dict layout.
+            selected = self._select_obs(obs)
+            parts = [arr.reshape(-1) for arr in selected.values()]
+            if parts:
+                raw = np.concatenate(parts).astype(np.float32)
+            else:
+                raw = np.zeros(self._reference_size, dtype=np.float32)
+            if raw.size < self._reference_size:
+                out = np.zeros(self._reference_size, dtype=np.float32)
+                out[: raw.size] = raw
+                return out
+            return raw[: self._reference_size]
+
         selected = self._select_obs(obs)
         aligned: dict[str, np.ndarray] = {}
         for key in self._obs_keys:
@@ -218,6 +246,41 @@ class RawRoboCasaAdapter(_GymEnvBase):
 
         flat = space_utils.flatten(self._dict_space, aligned)
         return np.asarray(flat, dtype=np.float32)
+
+    def _shaped_reward(self, raw_obs: Any, sparse_reward: float) -> float:
+        """Dense reward shaping using RoboCasa's fixture API.
+
+        Components (all in [0, 1] range before scaling):
+          1. reaching  — exp(-3*dist(EEF, door)) encourages approach
+          2. opening   — fxtr.get_door_state() gives normalised [0,1] opening
+          3. success   — sparse bonus amplified ×10
+        """
+        reward = sparse_reward * 10.0
+
+        if not isinstance(raw_obs, dict):
+            return reward
+
+        # 1. Reaching reward via obs key set by RoboCasa.
+        eef_to_door = raw_obs.get("door_obj_to_robot0_eef_pos")
+        if eef_to_door is not None:
+            dist = float(np.linalg.norm(eef_to_door))
+            reward += float(np.exp(-3.0 * dist)) * 0.5
+
+        # 2. Opening reward via fixture API (normalised 0→closed, 1→fully open).
+        fxtr = getattr(self.raw_env, "fxtr", None)
+        if fxtr is not None:
+            try:
+                joint_names = getattr(fxtr, "door_joint_names", None)
+                if joint_names:
+                    door_state = fxtr.get_joint_state(self.raw_env, joint_names)
+                    opening = float(max(door_state.values())) if door_state else 0.0
+                else:
+                    opening = 0.0
+            except Exception:
+                opening = 0.0
+            reward += opening * 2.0
+
+        return reward
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         """Reset raw env and return flattened observation."""
@@ -255,7 +318,8 @@ class RawRoboCasaAdapter(_GymEnvBase):
         if self._episode_steps >= self._horizon and not terminated:
             truncated = True
 
-        return self._flatten_obs(obs), float(reward), terminated, truncated, dict(info or {})
+        shaped = self._shaped_reward(obs, float(reward))
+        return self._flatten_obs(obs), shaped, terminated, truncated, dict(info or {})
 
     def render(self):
         return self.raw_env.render()
@@ -354,16 +418,41 @@ def load_env_config(path: str | Path) -> EnvConfig:
     )
 
 
-def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
+def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None, reference_obs_space: Any = None):
     """Instantiate RoboCasa environment using the unified project configuration.
 
     Raises:
         RuntimeError: when required RoboCasa assets are missing.
     """
 
-    import robocasa  # noqa: F401  # Register RoboCasa tasks in robosuite.
-    import robosuite
+    import contextlib as _contextlib
+    import io as _io
+    import logging as _logging
+    import warnings as _warnings
+
+    # robosuite/__init__.py emits WARNING/INFO to stderr and robocasa emits a
+    # mimicgen notice to stdout; sink both to a StringIO during the import.
+    # Real errors surface as exceptions, not log messages.
+    _sink = _io.StringIO()
+    with (
+        _contextlib.redirect_stderr(_sink),
+        _contextlib.redirect_stdout(_sink),
+        _warnings.catch_warnings(),
+    ):
+        _warnings.filterwarnings("ignore")
+        import robocasa  # noqa: F401  # Register RoboCasa tasks in robosuite.
+        import robosuite
+
     from robosuite.wrappers.gym_wrapper import GymWrapper
+
+    # Redirect every handler added by robosuite to the same sink so subsequent
+    # controller-config INFO messages are also suppressed.
+    for _name in ("robosuite", "robocasa"):
+        _lg = _logging.getLogger(_name)
+        for _h in _lg.handlers:
+            _h.stream = _sink
+        _lg.setLevel(_logging.ERROR)
+        _lg.propagate = False
 
     controller_cfg = _resolve_controller_config(env_cfg)
     task_name = env_cfg.task
@@ -416,7 +505,7 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
                 # Fallback to raw adapter if GymWrapper breaks on a version combination.
                 env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
         else:
-            env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon)
+            env = RawRoboCasaAdapter(raw_env=raw_env, horizon=env_cfg.horizon, reference_obs_space=reference_obs_space)
     except FileNotFoundError as exc:
         raise RuntimeError(
             "RoboCasa assets are missing. Run setup with DOWNLOAD_ASSETS=1 "

@@ -2,7 +2,7 @@ env:
   task: OpenCabinet
   robots: PandaOmron
   controller: null
-  use_gym_wrapper: true
+  use_gym_wrapper: false
   horizon: 400
   control_freq: 20
 

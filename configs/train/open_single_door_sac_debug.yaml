@@ -27,10 +27,11 @@ train:
   target_update_interval: 1
   net_arch: [256, 256]
 
+  n_envs: 8
   seed: 0
   save_freq_steps: 50000
   eval_episodes: 5
-  device: auto
+  device: mps
 
 eval:
   eval_freq: 25000
