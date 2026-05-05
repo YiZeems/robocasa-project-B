@@ -113,27 +113,43 @@ def resolve_checkpoint_artifact(path: str | Path) -> CheckpointArtifact:
 def _run_is_complete(run_dir: Path) -> bool:
     """Best-effort test for whether a run already finished."""
 
-    summary_path = run_dir / "train_summary.json"
     final_model_path = run_dir / "final_model.zip"
-    if not summary_path.exists() or not final_model_path.exists():
+    if not final_model_path.exists():
         return False
 
-    try:
-        with summary_path.open("r", encoding="utf-8") as f:
-            summary = json.load(f)
-    except Exception:
-        return False
+    # Primary signal: train_summary.json written at end of main()
+    summary_path = run_dir / "train_summary.json"
+    if summary_path.exists():
+        try:
+            with summary_path.open("r", encoding="utf-8") as f:
+                summary = json.load(f)
+            if isinstance(summary, dict):
+                completed = int(summary.get("completed_timesteps", -1))
+                target = int(summary.get("total_timesteps", -1))
+                if completed >= 0 and target >= 0 and completed >= target:
+                    return True
+        except Exception:
+            pass
 
-    if not isinstance(summary, dict):
-        return False
+    # Fallback: final_model.json metadata (saved before final eval)
+    final_meta_path = run_dir / "final_model.json"
+    if final_meta_path.exists():
+        try:
+            with final_meta_path.open("r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if isinstance(meta, dict):
+                completed = int(meta.get("num_timesteps", -1))
+                extra = meta.get("extra") or {}
+                target = int(
+                    meta.get("target_total_timesteps",
+                              extra.get("target_total_timesteps", -1))
+                )
+                if completed >= 0 and target >= 0 and completed >= target:
+                    return True
+        except Exception:
+            pass
 
-    try:
-        completed = int(summary.get("completed_timesteps", -1))
-        target = int(summary.get("total_timesteps", -1))
-    except (TypeError, ValueError):
-        return False
-
-    return completed >= 0 and target >= 0 and completed >= target
+    return False
 
 
 def find_latest_resume_candidate(
