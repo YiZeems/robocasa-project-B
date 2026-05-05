@@ -217,16 +217,17 @@ class MLflowMetricsCallback(BaseCallback):
 class RewardHackMonitorCallback(BaseCallback):
     """Accumulate per-episode reward component stats and log to MLflow.
 
-    With SubprocVecEnv each worker emits episode_reward_components in info
-    when the episode ends (done=True). This callback aggregates across workers
-    and logs episode-level means once per eval_freq timesteps.
-
-    Metrics logged (prefix reward_hack/):
-      - approach_frac   : fraction of total reward from approach (hover hacking signal)
-      - progress_frac   : fraction from progress (main learning signal)
-      - success_frac    : fraction from success bonus
-      - stagnation_eps  : rate of episodes that fired the stagnation penalty
-      - theta_best_mean : mean best door angle per episode
+    Logged metrics (reward_hack/* prefix):
+      approach_frac    — fraction of reward from approach; >0.5 after 100k = hover hacking
+      progress_frac    — fraction from progress; should grow over training
+      success_frac     — fraction from success bonus
+      oscillation_frac — fraction from oscillation penalty
+      stagnation_rate  — fraction of episodes that fired the stagnation penalty
+      theta_best_mean  — mean best door angle per episode (tracks door opening progress)
+      stagnation_steps_mean  — mean steps stuck near handle per episode
+      oscillation_steps_mean — mean steps oscillating per episode
+      sign_changes_mean      — mean door angle sign changes per episode
+      reward_without_success — mean episode return for failed episodes (reward hacking proxy)
     """
 
     def __init__(self, log_freq: int = 25_000):
@@ -236,40 +237,71 @@ class RewardHackMonitorCallback(BaseCallback):
         self._reset_buffers()
 
     def _reset_buffers(self) -> None:
-        self._ep_approach:   list[float] = []
-        self._ep_progress:   list[float] = []
-        self._ep_success:    list[float] = []
-        self._ep_total:      list[float] = []
-        self._ep_stagnation: list[float] = []
-        self._ep_theta_best: list[float] = []
+        self._ep_approach:    list[float] = []
+        self._ep_progress:    list[float] = []
+        self._ep_success_r:   list[float] = []
+        self._ep_oscillation: list[float] = []
+        self._ep_total:       list[float] = []
+        self._ep_stagnation_fired: list[float] = []
+        self._ep_theta_best:  list[float] = []
+        self._ep_stagnation_steps:  list[float] = []
+        self._ep_oscillation_steps: list[float] = []
+        self._ep_sign_changes: list[float] = []
+        self._ep_success_flag: list[float] = []
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
-        for info in infos:
+        dones = self.locals.get("dones", [False] * len(infos))
+
+        for info, done in zip(infos, dones):
+            if not done:
+                continue
             comp = info.get("episode_reward_components")
             if comp is None:
                 continue
+
             total = comp.get("total", 0.0)
             self._ep_approach.append(comp.get("approach", 0.0))
             self._ep_progress.append(comp.get("progress", 0.0))
-            self._ep_success.append(comp.get("success",  0.0))
+            self._ep_success_r.append(comp.get("success", 0.0))
+            self._ep_oscillation.append(comp.get("oscillation", 0.0))
             self._ep_total.append(total)
-            self._ep_stagnation.append(1.0 if comp.get("stagnation", 0.0) < -1e-6 else 0.0)
-            self._ep_theta_best.append(info.get("reward_components", {}).get("theta_best", 0.0))
+            self._ep_stagnation_fired.append(
+                1.0 if comp.get("stagnation_steps", 0.0) > 0 else 0.0
+            )
+            self._ep_theta_best.append(comp.get("theta_best", 0.0))
+            self._ep_stagnation_steps.append(comp.get("stagnation_steps", 0.0))
+            self._ep_oscillation_steps.append(comp.get("oscillation_steps", 0.0))
+            # sign_changes not in episode_summary, use step-level if available
+            rc = info.get("reward_components", {})
+            self._ep_sign_changes.append(rc.get("sign_changes", 0.0))
+            self._ep_success_flag.append(1.0 if comp.get("success", 0.0) > 0 else 0.0)
 
         if self.num_timesteps - self._last_log_t >= self._log_freq and self._ep_total:
             self._last_log_t = self.num_timesteps
             n = len(self._ep_total)
-            total_mean = float(np.mean(self._ep_total)) if self._ep_total else 1e-8
+            total_mean = float(np.mean(self._ep_total))
             denom = max(abs(total_mean), 1e-8)
+
+            failed_returns = [
+                t for t, s in zip(self._ep_total, self._ep_success_flag) if s == 0.0
+            ]
 
             try:
                 mlflow.log_metrics({
-                    "reward_hack/approach_frac":   float(np.mean(self._ep_approach)) / denom,
-                    "reward_hack/progress_frac":   float(np.mean(self._ep_progress)) / denom,
-                    "reward_hack/success_frac":    float(np.mean(self._ep_success))  / denom,
-                    "reward_hack/stagnation_rate": float(np.mean(self._ep_stagnation)),
-                    "reward_hack/episodes":        float(n),
+                    # Reward fraction breakdown (hover-hack / oscillation detection)
+                    "reward_hack/approach_frac":    float(np.mean(self._ep_approach))    / denom,
+                    "reward_hack/progress_frac":    float(np.mean(self._ep_progress))    / denom,
+                    "reward_hack/success_frac":     float(np.mean(self._ep_success_r))   / denom,
+                    "reward_hack/oscillation_frac": float(np.mean(self._ep_oscillation)) / denom,
+                    # Episode-level diagnostics
+                    "reward_hack/stagnation_rate":       float(np.mean(self._ep_stagnation_fired)),
+                    "reward_hack/theta_best_mean":       float(np.mean(self._ep_theta_best)),
+                    "reward_hack/stagnation_steps_mean": float(np.mean(self._ep_stagnation_steps)),
+                    "reward_hack/oscillation_steps_mean":float(np.mean(self._ep_oscillation_steps)),
+                    "reward_hack/sign_changes_mean":     float(np.mean(self._ep_sign_changes)),
+                    "reward_hack/reward_without_success":float(np.mean(failed_returns)) if failed_returns else float(np.mean(self._ep_total)),
+                    "reward_hack/episodes":              float(n),
                 }, step=self.num_timesteps)
             except Exception:
                 pass
@@ -479,39 +511,21 @@ class ValidationCallback(BaseCallback):
         action_magnitude_mean = float(metrics["action_magnitude_mean"])
         door_angle_final_mean = float(metrics.get("door_angle_final_mean", np.nan))
 
-        row = {
-            "step": float(self.num_timesteps),
-            "val_success_rate": success,
-            "val_return_mean": return_mean,
-            "val_return_std": float(metrics["return_std"]),
-            "val_episode_length_mean": episode_length_mean,
-            "val_episode_length_std": float(metrics["episode_length_std"]),
-            "val_action_magnitude_mean": action_magnitude_mean,
-            "val_action_magnitude_std": float(metrics["action_magnitude_std"]),
-        }
-        if "door_angle_final_mean" in metrics:
-            row["val_door_angle_final_mean"] = door_angle_final_mean
-            row["val_door_angle_final_std"] = float(metrics["door_angle_final_std"])
+        row: dict[str, float] = {"step": float(self.num_timesteps)}
+        for k, v in metrics.items():
+            if v is not None and isinstance(v, (int, float)):
+                row[f"val_{k}"] = float(v)
         self._history.append(row)
 
-        # Log metrics to MLflow
-        mlflow.log_metrics(
-            prefixed_metrics(
-                {
-                    "success_rate": success,
-                    "return_mean": return_mean,
-                    "return_std": float(metrics["return_std"]),
-                    "episode_length_mean": episode_length_mean,
-                    "episode_length_std": float(metrics["episode_length_std"]),
-                    "action_magnitude_mean": action_magnitude_mean,
-                    "action_magnitude_std": float(metrics["action_magnitude_std"]),
-                    "door_angle_final_mean": metrics.get("door_angle_final_mean"),
-                    "door_angle_final_std": metrics.get("door_angle_final_std"),
-                },
-                "validation_",
-            ),
-            step=self.num_timesteps,
-        )
+        # Log all metrics to MLflow (core + anti-hacking)
+        mlflow_metrics: dict[str, float] = {}
+        for k, v in metrics.items():
+            if v is not None and isinstance(v, (int, float)) and np.isfinite(float(v)):
+                mlflow_metrics[f"validation_{k}"] = float(v)
+        try:
+            mlflow.log_metrics(mlflow_metrics, step=self.num_timesteps)
+        except Exception:
+            pass
 
         write_header = not self._log_path.exists()
         with self._log_path.open("a", encoding="utf-8", newline="") as f:

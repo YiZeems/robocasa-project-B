@@ -30,10 +30,13 @@ reward:
   w_action_reg: 0.01    # penalise large/jerky actions
   w_stagnation: 0.05    # penalise proximity without progress (conditional)
   w_wrong_dir: 0.3      # penalise moving the door backward
+  w_oscillation: 0.2    # penalise repeated door oscillation without net progress
 
   # Thresholds
-  theta_success: 0.90   # normalised opening — matches RoboCasa fxtr.is_open(th=0.90)
-  d_max: 0.5            # approach reward goes to 0 beyond 0.5m from handle
-  d_prox: 0.12          # "robot is close" threshold for stagnation penalty (m)
-  stagnation_n: 50      # steps near handle with no new progress → penalty fires
-  tol_wrong_dir: 0.02   # tolerance below high-watermark before wrong-dir fires
+  theta_success: 0.90      # normalised opening — matches RoboCasa fxtr.is_open(th=0.90)
+  d_max: 0.5               # approach reward goes to 0 beyond 0.5m from handle
+  d_prox: 0.12             # "robot is close" threshold for stagnation penalty (m)
+  stagnation_n: 50         # steps near handle with no new progress → penalty fires
+  tol_wrong_dir: 0.02      # tolerance below high-watermark before wrong-dir fires
+  oscillation_window: 20   # sliding window for oscillation detection (steps)
+  oscillation_threshold: 4 # min sign changes in window to trigger penalty

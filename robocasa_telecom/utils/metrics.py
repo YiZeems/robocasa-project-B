@@ -21,6 +21,9 @@ DOOR_ANGLE_KEYS = (
     "joint_position_door",
 )
 
+# Distance below which the EEF is considered "near the handle"
+_D_PROX_DEFAULT = 0.15
+
 
 def _to_float(value: Any) -> float | None:
     """Convert a scalar-like value into a float if possible."""
@@ -180,22 +183,66 @@ def action_magnitude(action: Any) -> float:
     return float(np.linalg.norm(arr))
 
 
+def success_confidence_interval(
+    successes: list[float],
+    confidence: float = 0.95,
+) -> tuple[float, float]:
+    """Wilson score interval for a binary success rate.
+
+    More accurate than normal approximation for small n or extreme rates.
+    Returns (lower, upper) bounds.
+    """
+    n = len(successes)
+    if n == 0:
+        return 0.0, 0.0
+    p = float(np.mean(successes))
+    # z for 95% CI ≈ 1.96
+    z = 1.96 if confidence == 0.95 else float(np.abs(np.percentile(
+        np.random.standard_normal(100_000), 100 * (1 - (1 - confidence) / 2)
+    )))
+    denom = 1 + z ** 2 / n
+    centre = (p + z ** 2 / (2 * n)) / denom
+    margin = z * np.sqrt(p * (1 - p) / n + z ** 2 / (4 * n ** 2)) / denom
+    return float(max(0.0, centre - margin)), float(min(1.0, centre + margin))
+
+
 def summarize_rollout_episodes(
     model: Any,
     env: Any,
     episodes: int,
     seed: int = 0,
     deterministic: bool = True,
+    d_prox: float = _D_PROX_DEFAULT,
 ) -> dict[str, float]:
-    """Roll out a policy and summarize return, success, length, and action stats."""
+    """Roll out a policy and compute comprehensive anti-hacking metrics.
+
+    Metrics returned:
+    - return_mean / return_std / return_median
+    - success_rate + 95% CI (lower/upper)
+    - episode_length_mean / _std
+    - action_magnitude_mean / _std
+    - action_smoothness_mean  (mean ||a_t - a_{t-1}||, measures jerkiness)
+    - door_angle_final_mean / _std
+    - door_angle_max_mean     (high watermark per episode)
+    - door_angle_sign_changes_mean  (oscillation proxy)
+    - stagnation_steps_mean   (steps near handle without door progress)
+    - approach_frac_mean      (approach reward / total reward, hover-hack signal)
+    - reward_without_success  (mean return of failed episodes)
+    """
 
     episodes = max(1, int(episodes))
 
     returns: list[float] = []
     lengths: list[float] = []
     successes: list[float] = []
-    action_magnitudes: list[float] = []
-    door_angles: list[float] = []
+    action_mags: list[float] = []
+    action_smoothnesses: list[float] = []
+    door_angles_final: list[float] = []
+    door_angles_max: list[float] = []
+    sign_changes_per_ep: list[float] = []
+    stagnation_steps_per_ep: list[float] = []
+    approach_fracs: list[float] = []
+    returns_failure: list[float] = []
 
     for ep in range(episodes):
         if isinstance(env, VecEnv):
@@ -203,54 +250,133 @@ def summarize_rollout_episodes(
             obs = env.reset()
         else:
             obs, _ = env.reset(seed=seed + ep)
+
         done = False
         ep_return = 0.0
         ep_length = 0
         ep_success = False
-        ep_action_magnitudes: list[float] = []
-        ep_door_angle: float | None = None
+
+        ep_action_mags: list[float] = []
+        ep_actions: list[np.ndarray] = []
+        ep_door_angle_final: float | None = None
+        ep_door_angle_max: float = 0.0
+        ep_sign_changes: int = 0
+        ep_stagnation: int = 0
+        ep_theta_best: float = 0.0
+
+        ep_approach_total: float = 0.0
+        ep_reward_total: float = 0.0
+
+        prev_theta: float | None = None
+        prev_delta_sign: int = 0
 
         while not done:
             action, _state = model.predict(obs, deterministic=deterministic)
-            ep_action_magnitudes.append(action_magnitude(action))
+            action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+            ep_action_mags.append(float(np.linalg.norm(action_arr)))
+            ep_actions.append(action_arr.copy())
 
             obs, reward, terminated, truncated, info = env.step(action)
             ep_return += float(reward)
             ep_length += 1
             ep_success = ep_success or infer_success(info, env)
 
-            door_angle = extract_scalar_metric(info, env, DOOR_ANGLE_KEYS)
-            if door_angle is not None:
-                ep_door_angle = door_angle
+            # Door angle tracking
+            theta = extract_scalar_metric(info, env, DOOR_ANGLE_KEYS)
+            if theta is not None:
+                ep_door_angle_final = theta
+                ep_door_angle_max = max(ep_door_angle_max, theta)
+
+                # High-watermark progress tracking for stagnation
+                if theta > ep_theta_best + 1e-4:
+                    ep_theta_best = theta
+                else:
+                    comp = info.get("reward_components", {}) if isinstance(info, dict) else {}
+                    d_ee = comp.get("d_ee_handle", 1.0)
+                    if d_ee < d_prox:
+                        ep_stagnation += 1
+
+                # Oscillation: count sign changes in Δθ
+                if prev_theta is not None:
+                    delta = theta - prev_theta
+                    cur_sign = 1 if delta > 1e-4 else (-1 if delta < -1e-4 else 0)
+                    if cur_sign != 0 and prev_delta_sign != 0 and cur_sign != prev_delta_sign:
+                        ep_sign_changes += 1
+                    if cur_sign != 0:
+                        prev_delta_sign = cur_sign
+                prev_theta = theta
+
+            # Reward component tracking from info
+            comp = info.get("reward_components", {}) if isinstance(info, dict) else {}
+            ep_approach_total += abs(comp.get("approach", 0.0))
+            ep_reward_total += abs(float(reward))
 
             done = bool(terminated or truncated)
 
-        if ep_door_angle is None:
-            ep_door_angle = extract_scalar_metric(None, env, DOOR_ANGLE_KEYS)
+        if ep_door_angle_final is None:
+            ep_door_angle_final = extract_scalar_metric(None, env, DOOR_ANGLE_KEYS)
+
+        # Action smoothness: mean ||a_t - a_{t-1}||
+        if len(ep_actions) >= 2:
+            diffs = [
+                float(np.linalg.norm(ep_actions[i] - ep_actions[i - 1]))
+                for i in range(1, len(ep_actions))
+            ]
+            smoothness = float(np.mean(diffs))
+        else:
+            smoothness = 0.0
+
+        # Approach fraction (hover-hack signal)
+        approach_frac = (
+            ep_approach_total / max(ep_reward_total, 1e-8)
+            if ep_reward_total > 1e-8 else 0.0
+        )
 
         returns.append(ep_return)
         lengths.append(float(ep_length))
         successes.append(float(ep_success))
-        action_magnitudes.append(
-            float(np.mean(ep_action_magnitudes)) if ep_action_magnitudes else 0.0
-        )
-        if ep_door_angle is not None:
-            door_angles.append(float(ep_door_angle))
+        action_mags.append(float(np.mean(ep_action_mags)) if ep_action_mags else 0.0)
+        action_smoothnesses.append(smoothness)
+        if ep_door_angle_final is not None:
+            door_angles_final.append(float(ep_door_angle_final))
+        door_angles_max.append(ep_door_angle_max)
+        sign_changes_per_ep.append(float(ep_sign_changes))
+        stagnation_steps_per_ep.append(float(ep_stagnation))
+        approach_fracs.append(approach_frac)
+        if not ep_success:
+            returns_failure.append(ep_return)
 
-    metrics = {
-        "return_mean": float(np.mean(returns)),
-        "return_std": float(np.std(returns)),
-        "success_rate": float(np.mean(successes)),
+    ci_lo, ci_hi = success_confidence_interval(successes)
+
+    metrics: dict[str, float] = {
+        # Core performance
+        "return_mean":   float(np.mean(returns)),
+        "return_std":    float(np.std(returns)),
+        "return_median": float(np.median(returns)),
+        "success_rate":  float(np.mean(successes)),
+        "success_ci_lo": ci_lo,
+        "success_ci_hi": ci_hi,
+        "failure_rate":  1.0 - float(np.mean(successes)),
+        # Episode length
         "episode_length_mean": float(np.mean(lengths)),
-        "episode_length_std": float(np.std(lengths)),
-        "action_magnitude_mean": float(np.mean(action_magnitudes)),
-        "action_magnitude_std": float(np.std(action_magnitudes)),
+        "episode_length_std":  float(np.std(lengths)),
+        # Actions
+        "action_magnitude_mean": float(np.mean(action_mags)),
+        "action_magnitude_std":  float(np.std(action_mags)),
+        "action_smoothness_mean": float(np.mean(action_smoothnesses)),
+        # Anti-hacking
+        "door_angle_max_mean":       float(np.mean(door_angles_max)),
+        "sign_changes_mean":         float(np.mean(sign_changes_per_ep)),
+        "stagnation_steps_mean":     float(np.mean(stagnation_steps_per_ep)),
+        "approach_frac_mean":        float(np.mean(approach_fracs)),
+        "reward_without_success":    float(np.mean(returns_failure)) if returns_failure else float(np.mean(returns)),
+        # Meta
         "num_episodes": float(episodes),
     }
 
-    if door_angles:
-        metrics["door_angle_final_mean"] = float(np.mean(door_angles))
-        metrics["door_angle_final_std"] = float(np.std(door_angles))
+    if door_angles_final:
+        metrics["door_angle_final_mean"] = float(np.mean(door_angles_final))
+        metrics["door_angle_final_std"]  = float(np.std(door_angles_final))
 
     return metrics
 
@@ -270,4 +396,3 @@ def prefixed_metrics(
             continue
         out[f"{prefix}{key}"] = scalar
     return out
-
