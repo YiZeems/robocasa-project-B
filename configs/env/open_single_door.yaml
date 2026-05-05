@@ -3,8 +3,8 @@ env:
   robots: PandaOmron
   controller: null
   use_gym_wrapper: false
-  horizon: 400
-  control_freq: 20
+  horizon: 500
+  control_freq: 10
 
   reward_shaping: true
   use_object_obs: true
