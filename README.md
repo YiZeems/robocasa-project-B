@@ -1,8 +1,9 @@
-# RoboCasa Project B — Telecom Paris (IA705)
+# RoboCasa — Ouverture de porte avec PandaOmron (IA705, Telecom Paris)
 
-> **Mission** : entraîner et comparer un agent RL sur la tâche atomique
-> **« ouvrir une porte »** dans RoboCasa, en s'appuyant sur **SAC** comme
-> méthode principale et **PPO** comme baseline.
+> **Tâche atomique** : apprendre à ouvrir une porte de placard dans RoboCasa  
+> **Robot** : PandaOmron (bras Panda sur base mobile Omron — navigation exclue)  
+> **Méthode** : SAC comme algorithme principal · PPO comme baseline comparative  
+> **Contexte** : projet académique IA705 — Apprentissage pour la robotique, Mastère Spécialisé IA Multimodale, Telecom Paris
 
 [![Python](https://img.shields.io/badge/python-3.11-blue)](pyproject.toml)
 [![Build system](https://img.shields.io/badge/env-uv-261230)](scripts/setup_uv.sh)
@@ -13,43 +14,36 @@
 
 ## Sommaire
 
-- [1. Contexte et question de recherche](#1-contexte-et-question-de-recherche)
-- [2. Vue d'ensemble](#2-vue-densemble)
-- [3. Architecture](#3-architecture)
-- [4. Installation](#4-installation)
-- [5. Lancer un run](#5-lancer-un-run)
-- [6. Évaluer un checkpoint](#6-évaluer-un-checkpoint)
-- [7. Plan d'expériences](#7-plan-dexpériences)
-- [8. Configurations YAML](#8-configurations-yaml)
-- [9. Artefacts produits](#9-artefacts-produits)
-- [10. Détection du surentraînement](#10-détection-du-surentraînement)
-- [11. Planning](#11-planning)
-- [12. SLURM et calcul cluster](#12-slurm-et-calcul-cluster)
-- [13. Documentation associée](#13-documentation-associée)
+- [Vue d'ensemble](#vue-densemble)
+- [Objectif du projet](#objectif-du-projet)
+- [Tâche et environnement](#tâche-et-environnement)
+- [Méthode RL](#méthode-rl)
+- [Reward shaping](#reward-shaping)
+- [Métriques](#métriques)
+- [Structure du repo](#structure-du-repo)
+- [Installation](#installation)
+- [Démarrage rapide](#démarrage-rapide)
+- [Entraînement](#entraînement)
+- [Évaluation](#évaluation)
+- [Génération vidéo](#génération-vidéo)
+- [MLflow](#mlflow)
+- [Résultats](#résultats)
+- [Reproductibilité](#reproductibilité)
+- [Troubleshooting](#troubleshooting)
+- [Checklist de rendu](#checklist-de-rendu)
+- [Références](#références)
 
 ---
 
-## 1. Contexte et question de recherche
+## Vue d'ensemble
 
-Sur la tâche `OpenCabinet` (alias `OpenSingleDoor` / `OpenDoor`) avec un robot
-`PandaOmron`, on cherche à répondre à :
+Ce projet applique l'apprentissage par renforcement profond à la manipulation robotique en simulation : un agent apprend à ouvrir une porte de placard de cuisine sans aucune démonstration préalable, à partir de zéro.
 
-> **Quelle méthode RL est la plus adaptée pour ouvrir une porte — SAC, PPO, ou
-> une combinaison — et à partir de quand l'entraînement devient-il du
-> surentraînement ?**
+```
+Entrée : config YAML  →  Entraînement SAC/PPO  →  Checkpoint  →  Évaluation / Vidéo
+```
 
-Choix retenus, justifiés en détail dans
-[docs/guide_general_prompting_projet_rl_robocasa_porte.md](docs/guide_general_prompting_projet_rl_robocasa_porte.md) :
-
-- **SAC** comme méthode principale : off-policy, sample-efficient sur le
-  contrôle continu, exploration via maximisation d'entropie.
-- **PPO** comme baseline comparative : on-policy, stable.
-- **Observations état bas niveau** privilégiées (le RGB est volontairement écarté
-  pour tenir la deadline).
-- **Métrique principale** : *validation success rate*, pas le reward seul.
-- **Sélection de checkpoint** : meilleur succès validation, **pas** le dernier.
-
-## 2. Vue d'ensemble
+**Pipeline complet :**
 
 ```mermaid
 flowchart LR
@@ -58,117 +52,254 @@ flowchart LR
         Y2[configs/train/*.yaml]
     end
     subgraph Pipeline
-        F[envs/factory.py<br/>make_env_from_config]
-        T[rl/train.py<br/>SAC ou PPO + ValidationCallback]
-        E[rl/evaluate.py<br/>--split validation/test]
+        F[envs/factory.py]
+        T[rl/train.py — SAC · PPO]
+        E[rl/evaluate.py — validation/test]
+        V[rl/eval_video.py — best episode]
     end
     subgraph Outputs
-        C[checkpoints/&lt;run_id&gt;/<br/>best_model.zip<br/>final_model.zip]
-        O[outputs/&lt;run_id&gt;/<br/>monitor.csv<br/>validation_curve.csv<br/>train_summary.json]
-        V[outputs/eval/<br/>eval_*.json + videos/*.mp4]
+        C[checkpoints/ best_model.zip]
+        O[outputs/ validation_curve.csv]
+        M[mlruns/ MLflow]
+        MP4[outputs/eval/videos/*.mp4]
     end
-    Y1 --> F
-    Y2 --> T
-    F --> T
-    T --> C
-    T --> O
-    C --> E
-    E --> V
+    Y1 --> F --> T --> C --> E --> MP4
+    Y2 --> T --> O --> M
+    C --> V --> MP4
 ```
 
-## 3. Architecture
+---
+
+## Objectif du projet
+
+**Question de recherche :**  
+> Sur la tâche atomique *ouvrir une porte* dans RoboCasa, quelle méthode RL est la plus adaptée — SAC ou PPO — et à partir de quand le surentraînement apparaît-il ?
+
+**Choix méthodologiques :**
+- **SAC** (Soft Actor-Critic) comme méthode principale : off-policy, sample-efficient, maximisation d'entropie pour l'exploration
+- **PPO** (Proximal Policy Optimization) comme baseline comparative : on-policy, stable, simple à tuner
+- **Observations état bas niveau** (vecteurs de joints, positions) plutôt que RGB pour tenir la deadline
+- **Métrique principale** : *validation success rate* (pas la reward brute)
+- **Sélection de checkpoint** : meilleur succès validation, **jamais** le dernier step
+
+---
+
+## Tâche et environnement
+
+### Tâche : OpenCabinet
+
+| Propriété | Valeur |
+|---|---|
+| Nom RoboCasa | `OpenCabinet` (alias `OpenSingleDoor`) |
+| Objectif | Ouvrir la porte d'un placard de cuisine ≥ 90 % de son angle maximal |
+| Succès | `theta_normalised ≥ 0.90` (vérifié par `fxtr.is_open(th=0.90)`) |
+| Horizon | 500 steps par épisode |
+| Fréquence de contrôle | 10 Hz |
+| Observation | État bas niveau : joints, EEF, distance poignée (~50 scalaires) |
+| Action | Espace continu : commande différentielle du bras (7 DoF) |
+| Réseau de neurones | MLP [256, 256] (acteur + critique) |
+
+### Robot : PandaOmron
+
+Le robot PandaOmron est un **Franka Panda** (7 DoF, manipulation précise) monté sur une **base mobile Omron**. Dans ce projet, **la navigation est explicitement exclue** : seul le bras est entraîné, la base reste fixe. Le robot est positionné face au placard dès le reset.
+
+### Environnement
+
+- **Simulateur** : MuJoCo 3.x via RoboSuite 1.5.2
+- **Framework haut niveau** : RoboCasa 1.0.0 (scènes de cuisine procédurales)
+- **Interface RL** : Gymnasium 0.29.1 (via adaptateur `RawRoboCasaAdapter`)
+- **Parallélisation** : `SubprocVecEnv` avec 12 workers pour SAC
+- **Assets** : objets Objaverse (variantes procédurales de portes et de cuisines)
+
+---
+
+## Méthode RL
+
+### SAC (algorithme principal)
+
+SAC maximise simultanément la récompense cumulée et l'entropie de la politique, ce qui favorise une exploration naturelle sans avoir à fixer manuellement un calendrier d'exploration.
+
+| Hyperparamètre | Valeur |
+|---|---:|
+| `learning_rate` | 3 × 10⁻⁴ |
+| `buffer_size` | 1 000 000 |
+| `batch_size` | 512 |
+| `learning_starts` | 1 000 |
+| `tau` (soft update) | 0.005 |
+| `gamma` | 0.99 |
+| `train_freq` | 1 step / env step |
+| `gradient_steps` | 12 (par step) |
+| `ent_coef` | auto (entropie cible adaptée) |
+| `n_envs` | 12 workers parallèles |
+| Architecture | MLP [256, 256] |
+
+### PPO (baseline comparative)
+
+| Hyperparamètre | Valeur |
+|---|---:|
+| `learning_rate` | 3 × 10⁻⁴ |
+| `n_steps` | 1 024 |
+| `batch_size` | 256 |
+| `n_epochs` | 10 |
+| `gamma` | 0.99 |
+| `gae_lambda` | 0.95 |
+| `clip_range` | 0.2 |
+| `ent_coef` | 0.01 |
+| Architecture | MLP [256, 256] |
+
+### Plan d'expériences
+
+| # | Run | Config | Algo | Steps | Rôle |
+|---|---|---|---|---:|---|
+| 0 | SAC debug | `open_single_door_sac_debug.yaml` | SAC | 300 k | Sanity — validation reward shaping |
+| 1 | SAC principal | `open_single_door_sac.yaml` | SAC | 3 M | Référence principale |
+| 2 | SAC tuned | `open_single_door_sac_tuned.yaml` | SAC | 2 M | Variante (lr=1e-4, ent=auto_0.2) |
+| 3 | PPO baseline | `open_single_door_ppo_baseline.yaml` | PPO | 5 M | Baseline comparative |
+
+---
+
+## Reward shaping
+
+La reward naive de RoboCasa encourage le robot à s'approcher de la poignée, ce qui peut conduire à du **reward hacking** : l'agent apprend à rester immobile devant la poignée pour accumuler la reward d'approche sans jamais ouvrir la porte.
+
+### Formule complète
+
+```
+R = w_approach  × r_approach   (gated : désactivé une fois la porte ouverte)
+  + w_progress  × r_progress   (high-watermark, anti-oscillation)
+  + w_success   × r_success    (bonus sparse, dominant)
+  - w_action_reg × ‖a‖²        (régularisation action)
+  - w_stagnation × p_stag      (pénalité conditionnelle : proche + bloqué)
+  - w_wrong_dir  × p_back      (pénalité : porte repoussée)
+  - w_oscillation × p_osc      (pénalité : oscillations répétées)
+```
+
+### Composantes et coefficients
+
+| Composante | Description | Coefficient | Risque évité | Métrique associée |
+|---|---|---:|---|---|
+| `approach` | Distance EEF → poignée normalisée, gated | 0.05 | Hover hacking | `approach_frac_mean` |
+| `progress` | Δθ high-watermark (θ_best − θ_précédent) | 1.0 | Oscillation | `door_angle_max_mean` |
+| `success` | Bonus sparse si θ ≥ 0.90 | 5.0 | Ignorer la tâche | `success_rate` |
+| `action_reg` | −‖a‖² (jerk penalty) | 0.01 | Actions parasites | `action_smoothness_mean` |
+| `stagnation` | −1 si près poignée + bloqué ≥ 50 steps | 0.05 | Hover hacking long | `stagnation_steps_mean` |
+| `wrong_dir` | −Δθ_négatif si θ < θ_best − tol | 0.3 | Refermer la porte | `sign_changes_mean` |
+| `oscillation` | −sign_changes/window si fenêtre saturée | 0.2 | Oscillation rapide | `sign_changes_mean` |
+
+**Mécanismes clés :**
+- **High-watermark progress** : l'agent ne peut recevoir de reward de progression qu'en battant son meilleur angle de porte de l'épisode. Impossible de gagner en oscillant.
+- **Gating de l'approche** : la reward d'approche est nulle une fois la porte ouverte (θ ≥ 0.90), évitant de récompenser le stationnement devant la poignée.
+- **Pénalité de stagnation conditionnelle** : elle ne s'active que si le robot est déjà proche de la poignée (d < 0.12 m) ET n'a pas progressé depuis 50 steps — évitant les faux positifs.
+
+Documentation complète : [docs/reward_shaping.md](docs/reward_shaping.md)
+
+---
+
+## Métriques
+
+| Métrique | Description | Cible |
+|---|---|---|
+| `val_success_rate` | Taux de succès sur split validation (épisodes où θ ≥ 0.90) | > 80 % |
+| `val_return_mean` | Return moyen par épisode sur validation | Croissant |
+| `val_door_angle_final_mean` | Angle de porte normalisé à la fin de l'épisode | → 1.0 |
+| `val_door_angle_max_mean` | Meilleur angle atteint dans l'épisode (high-watermark) | → 1.0 |
+| `val_stagnation_steps_mean` | Steps passés près de la poignée sans progrès | ↓ 0 |
+| `val_approach_frac_mean` | Part de la reward qui vient de l'approche (> 0.5 = hover hack) | < 0.3 |
+| `val_sign_changes_mean` | Changements de signe de Δθ par épisode (oscillation) | ↓ 0 |
+| `val_action_smoothness_mean` | Jerkiness moyenne des actions | Stable |
+| `train/reward_hack/*` | Fractions intra-épisode (approach, stagnation, oscillation) | Toutes ↓ |
+
+Documentation complète : [docs/metrics.md](docs/metrics.md)
+
+---
+
+## Structure du repo
 
 ```text
-.
-├── robocasa_telecom/
-│   ├── envs/factory.py         # adapters Gymnasium pour RoboCasa/RoboSuite
-│   ├── rl/train.py             # entrainement algo-agnostique (PPO + SAC)
-│   ├── rl/evaluate.py          # eval avec split validation/test, vidéos MP4
-│   ├── tools/sanity.py         # smoke test reset/step
-│   └── utils/                  # io.py, success.py, video.py
+robocasa-project-B/
+├── README.md                          ← ce fichier
+├── Makefile                           ← toutes les commandes courantes
+├── pyproject.toml                     ← dépendances Python (uv)
+├── uv.lock                            ← lock file reproductible
+├── pytest.ini
+│
 ├── configs/
-│   ├── env/open_single_door.yaml
+│   ├── env/open_single_door.yaml      ← env + reward shaping
 │   └── train/
-│       ├── open_single_door_sac_debug.yaml
-│       ├── open_single_door_sac.yaml
-│       ├── open_single_door_sac_tuned.yaml
-│       ├── open_single_door_ppo.yaml          # smoke (200k)
-│       └── open_single_door_ppo_baseline.yaml # baseline (5M)
+│       ├── open_single_door_sac_debug.yaml   ← 300k (sanity)
+│       ├── open_single_door_sac.yaml         ← 3M (référence)
+│       ├── open_single_door_sac_tuned.yaml   ← 2M (variante)
+│       ├── open_single_door_ppo.yaml         ← 200k (smoke PPO)
+│       └── open_single_door_ppo_baseline.yaml ← 5M (baseline)
+│
+├── robocasa_telecom/
+│   ├── envs/
+│   │   ├── factory.py    ← adapters Gymnasium ↔ RoboCasa
+│   │   └── reward.py     ← AntiHackingReward + RewardConfig
+│   ├── rl/
+│   │   ├── train.py      ← entraînement SAC/PPO + callbacks
+│   │   ├── evaluate.py   ← évaluation validation/test
+│   │   ├── eval_video.py ← génération vidéo two-pass
+│   │   └── render_best_run.py
+│   ├── utils/
+│   │   ├── metrics.py    ← summarize_rollout_episodes, CI Wilson
+│   │   ├── checkpoints.py ← resolve, auto-resume
+│   │   ├── success.py    ← infer_success (hiérarchique)
+│   │   ├── video.py      ← save_mp4, grid_2x2
+│   │   └── io.py
+│   └── tools/sanity.py   ← smoke test reset/step
+│
 ├── scripts/
-│   ├── setup_uv.sh             # bootstrap uv + clones robosuite/robocasa + assets
-│   ├── with_env.sh             # fallback pour exécuter une commande dans .venv
+│   ├── setup_uv.sh        ← installation complète
+│   ├── plot_training.py   ← génère les courbes PNG
 │   ├── run_train.sh, run_eval.sh
-│   └── slurm/{train_array,eval}.sbatch
+│   └── slurm/            ← sbatch pour cluster HPC
+│
 ├── docs/
-│   ├── EXPERIMENTS.md          # plan de runs et protocole
-│   ├── guide_general_prompting_projet_rl_robocasa_porte.md
-│   ├── planning_deadline_runs_rapport_rl_robocasa.md
-│   ├── ARCHITECTURE.md, METHODS.md, RUNBOOK.md, CI.md, FILE_REFERENCE.md, PACKAGES.md
-├── tests/test_config_loading.py
-├── pyproject.toml + uv.lock
-└── Makefile
+│   ├── project_report.md      ← rapport pour le professeur
+│   ├── reward_shaping.md      ← documentation reward détaillée
+│   ├── metrics.md             ← toutes les métriques
+│   ├── experiments.md         ← protocole expérimental
+│   ├── video_generation.md    ← génération vidéo
+│   ├── reproducibility.md     ← guide de reproductibilité
+│   ├── troubleshooting.md     ← dépannage
+│   ├── results.md             ← résultats (mis à jour après runs)
+│   ├── submission_checklist.md ← checklist de rendu
+│   ├── ARCHITECTURE.md, METHODS.md, RUNBOOK.md, ...
+│
+├── external/
+│   ├── robocasa/    ← clone local (commit fixé dans setup_uv.sh)
+│   └── robosuite/   ← clone local (commit fixé)
+│
+├── checkpoints/     ← modèles sauvegardés (non versionnés Git)
+├── outputs/         ← courbes CSV, JSON, vidéos (non versionnés Git)
+├── mlruns/          ← MLflow local (non versionné Git)
+└── logs/            ← TensorBoard (non versionné Git)
 ```
 
-### 3.1 Boucle d'entraînement
+---
 
-```mermaid
-flowchart TD
-    A[YAML config] --> B[load_yaml]
-    B --> C[_resolve_run_context<br/>algo, seed, eval]
-    C --> D[make_env_from_config — train]
-    C --> E[make_env_from_config — validation<br/>seed = validation_seed]
-    D --> F[Monitor wrapper<br/>monitor.csv]
-    F --> G{algorithm}
-    G -- PPO --> H[_build_ppo]
-    G -- SAC --> I[_build_sac]
-    H --> J[model.learn]
-    I --> J
-    J --> K[PeriodicCheckpointCallback<br/>save_freq_steps]
-    J --> L[ValidationCallback<br/>eval_freq=25k]
-    L --> E
-    L --> M{success > best ?}
-    M -- oui --> N[save best_model.zip]
-    M -- non --> O[no_improve += 1]
-    O --> P{patience atteinte ?}
-    P -- oui --> Q[stop training]
-    P -- non --> J
-    J --> R[final_model.zip<br/>train_summary.json<br/>validation_curve.csv]
-```
+## Installation
 
-### 3.2 Décision algo / observation
-
-```mermaid
-flowchart TD
-    Start[Quelle observation ?]
-    Start -->|État bas niveau| StateObs
-    Start -->|Image RGB| ImgObs
-    Start -->|Démos disponibles| DemoObs
-
-    StateObs --> SAC1[SAC — méthode principale]
-    SAC1 --> PPO1[PPO baseline comparative]
-
-    ImgObs --> DrQ[DrQ-v2 ou SAC + CNN]
-    DrQ --> Note1[hors scope deadline]
-
-    DemoObs --> BC[Behavior Cloning / Diffusion Policy]
-    BC --> SAC2[Fine-tuning SAC]
-```
-
-## 4. Installation
-
-Pré-requis : `uv`, `git`, `python ≥ 3.11`. macOS/Linux supportés ; Windows via
-WSL ou Git Bash.
+**Pré-requis :** `uv`, `git`, Python ≥ 3.11. macOS/Linux. Windows via WSL.
 
 ```bash
+# Cloner le repo
+git clone https://github.com/YiZeems/robocasa-project-B.git
+cd robocasa-project-B
+
+# Installation complète (clone robocasa/robosuite, assets, .venv)
 bash scripts/setup_uv.sh
 ```
 
-Ce script clone `external/robosuite` + `external/robocasa` aux commits fixés,
-crée `.venv` via `uv`, installe les dépendances locales `robocasa` /
-`robosuite` depuis `external/`, relie ou télécharge les assets RoboCasa, puis
-valide les assets et les imports.
+Le script `setup_uv.sh` :
+1. Clone `external/robosuite` et `external/robocasa` aux commits figés
+2. Crée `.venv` via `uv` avec Python 3.11
+3. Installe toutes les dépendances listées dans `pyproject.toml`
+4. Relie ou télécharge les assets RoboCasa
+5. Valide les imports et les assets critiques
 
-Variables d'environnement utiles :
+**Installation avec contrôle complet :**
 
 ```bash
 PYTHON_VERSION=3.11 \
@@ -177,261 +308,357 @@ DOWNLOAD_DATASETS=0 RUN_SETUP_MACROS=1 \
 bash scripts/setup_uv.sh
 ```
 
-Sanity check :
+**Vérification post-installation :**
 
 ```bash
-make sanity
-# ou
-uv run python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20
+make check    # compile + pip check
+make sanity   # smoke test reset/step 20 pas
 ```
 
-Vérifications rapides recommandées après setup :
+---
+
+## Démarrage rapide
+
+### Run de debug (2–5 minutes)
+
+Valide l'installation, le reward shaping, et MLflow. 12 workers, 300k steps.
 
 ```bash
-make check
-make sanity
+make train-sac-debug SEED=0
+```
+
+Équivalent complet :
+
+```bash
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_sac_debug.yaml \
+  --seed 0
+```
+
+Résultat attendu : 4 évaluations validation, `validation_curve.csv` généré, checkpoint `best_model.zip` sauvegardé.
+
+### Smoke test minimal (< 1 minute)
+
+```bash
 uv run python -m robocasa_telecom.train \
   --config configs/train/open_single_door_sac_debug.yaml \
   --seed 0 --total-timesteps 10 --no-auto-resume
 ```
 
-## 5. Lancer un run
+---
 
-Cibles `make` prêtes à l'emploi (paramétrables via `SEED=<n>`) :
+## Entraînement
 
-```bash
-make train-sac-debug      # 300k — sanity SAC
-make train-sac            # 3M    — run principal SAC
-make train-sac-tuned      # 2M    — variante (lr=1e-4, batch=512, ent=auto_0.2)
-make train-ppo            # 200k  — smoke PPO
-make train-ppo-baseline   # 5M    — baseline PPO
-```
-
-Matrice des commandes recommandées :
-
-| Usage | Commande |
-|---|---|
-| Smoke setup + train court | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_debug.yaml --seed 0 --total-timesteps 10 --no-auto-resume` |
-| SAC debug | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_debug.yaml --seed 0` |
-| SAC principal | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac.yaml --seed 0` |
-| SAC tuned | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_sac_tuned.yaml --seed 0` |
-| PPO smoke | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_ppo.yaml --seed 0` |
-| PPO baseline | `uv run python -m robocasa_telecom.train --config configs/train/open_single_door_ppo_baseline.yaml --seed 0` |
-
-Commande recommandée :
+### Commandes Make
 
 ```bash
-uv run python -m robocasa_telecom.train \
-  --config configs/train/open_single_door_sac.yaml --seed 0
+make train-sac-debug SEED=0      # 300k — sanity + validation reward
+make train-sac       SEED=0      # 3M   — run principal (référence)
+make train-sac-tuned SEED=0      # 2M   — variante hyperparamètres
+make train-ppo-baseline SEED=0   # 5M   — baseline PPO
 ```
 
-Le wrapper `scripts/run_train.sh` reste disponible, mais il n’est pas
-nécessaire si `uv` est déjà installé.
-
-Note environnement :
-- `make_env_from_config` tente le `GymWrapper` RoboSuite puis bascule
-  automatiquement vers `RawRoboCasaAdapter` si la shape d'observation dérive
-  entre resets.
-- Les warnings `mink`, `mimicgen` ou `Gym has been unmaintained` sont connus
-  sur cette stack et ne bloquent pas les runs validés ici.
-
-Override CLI :
-
-```bash
-# Forcer un autre algo / nombre de steps sans toucher au YAML
-uv run python -m robocasa_telecom.train \
-  --config configs/train/open_single_door_sac.yaml \
-  --algorithm SAC --total-timesteps 500000 --seed 1
-```
-
-Reprise depuis un checkpoint:
+### Run complet SAC (3M steps, référence)
 
 ```bash
 uv run python -m robocasa_telecom.train \
   --config configs/train/open_single_door_sac.yaml \
-  --seed 1 \
+  --seed 0
+```
+
+Durée estimée : ~19 h sur macOS M-series (MPS), ~8 h sur RTX 4070.
+
+### Run PPO baseline (5M steps)
+
+```bash
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_ppo_baseline.yaml \
+  --seed 0
+```
+
+### Reprise automatique
+
+Par défaut, `train.py` détecte et reprend le dernier run incomplet compatible (même task/algo/seed). Pour forcer un départ neuf :
+
+```bash
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_sac.yaml \
+  --seed 0 --no-auto-resume
+```
+
+Reprise explicite depuis un checkpoint :
+
+```bash
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_sac.yaml \
+  --seed 0 \
   --resume-from checkpoints/<run_id>/sac_100000_steps.zip
 ```
 
-`--resume-from` accepte aussi un dossier `checkpoints/<run_id>/` et reprend alors
-depuis le dernier `*_steps.zip` disponible. Pour SAC, le replay buffer est
-sauvegardé avec chaque checkpoint périodique.
+### Artefacts générés par l'entraînement
 
-Par défaut, `robocasa_telecom.train` active aussi `--auto-resume` et reprend
-automatiquement le dernier run incomplet qui correspond au même
-`task/algo/seed`. Pour forcer un départ neuf, utilise `--no-auto-resume`.
+```text
+outputs/<run_id>/
+  monitor.csv              ← reward/longueur d'épisode (SB3 Monitor)
+  validation_curve.csv     ← toutes les métriques validation par step
+  train_summary.json       ← résumé complet du run
+  resolved_train_config.yaml ← config résolue (reproductibilité)
 
-## 6. Évaluer un checkpoint
+checkpoints/<run_id>/
+  best_model.zip           ← meilleur succès validation → UTILISER POUR LE RAPPORT
+  final_model.zip          ← état au dernier step
+  sac_<step>_steps.zip     ← checkpoints périodiques (tous les 100k)
+  sac_<step>_steps_replay_buffer.pkl
+```
 
-Le run produit `best_model.zip` (meilleur succès validation) et `final_model.zip`.
-Pour le rapport, utiliser **best**, pas **final**.
+---
+
+## Évaluation
+
+### Évaluer le meilleur checkpoint
 
 ```bash
-# Validation seeds (déclarés dans le YAML : eval.validation_seed = 10000)
+# Split validation (seeds vus pendant l'entraînement)
 make eval-validation \
   CONFIG=configs/train/open_single_door_sac.yaml \
   CHECKPOINT=checkpoints/<run_id>/best_model.zip \
   EPISODES=50
 
-# Test seeds non vus (eval.test_seed = 20000)
+# Split test (seeds non vus — résultats finaux)
 make eval-test \
   CONFIG=configs/train/open_single_door_sac.yaml \
   CHECKPOINT=checkpoints/<run_id>/best_model.zip \
   EPISODES=50
 ```
 
-CLI direct recommandé (avec export vidéo MP4 mosaïque 4 caméras) :
+CLI direct :
 
 ```bash
 uv run python -m robocasa_telecom.evaluate \
   --config configs/train/open_single_door_sac.yaml \
   --checkpoint checkpoints/<run_id>/best_model.zip \
   --num-episodes 50 \
-  --split validation \
-  --deterministic \
-  --video-every 5 --video-fps 20
+  --split test \
+  --deterministic
 ```
 
-## 7. Plan d'expériences
+Résultat : `outputs/eval/eval_SAC_test_<timestamp>.json` avec success_rate, return_mean, door_angle_final, etc.
 
-| # | Run | Config YAML | Algo | Steps | Rôle |
-|---|---|---|---|---:|---|
-| 0 | SAC debug | [`open_single_door_sac_debug.yaml`](configs/train/open_single_door_sac_debug.yaml) | SAC | 300k | Sanity + reward shaping |
-| 1 | SAC principal | [`open_single_door_sac.yaml`](configs/train/open_single_door_sac.yaml) | SAC | 3M | Référence |
-| 2 | SAC tuned | [`open_single_door_sac_tuned.yaml`](configs/train/open_single_door_sac_tuned.yaml) | SAC | 2M | Variante |
-| 3 | PPO baseline | [`open_single_door_ppo_baseline.yaml`](configs/train/open_single_door_ppo_baseline.yaml) | PPO | 5M | Baseline |
+### Critères d'interprétation
 
-Détails opérationnels (stratégie, critères, debug) dans
-[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
-
-## 8. Configurations YAML
-
-Toutes les configs train partagent la même structure :
-
-```yaml
-project: { name, task }
-paths: { output_root, checkpoint_root, tensorboard_root }
-env:
-  config_path: configs/env/open_single_door.yaml
-train:
-  algorithm: SAC | PPO       # nouveau — sélectionne PPO ou SAC
-  policy: MlpPolicy
-  total_timesteps: ...
-  # Hyperparamètres spécifiques (PPO : n_steps, clip_range, gae_lambda…)
-  # (SAC  : buffer_size, tau, learning_starts, train_freq, gradient_steps,
-  #         ent_coef, target_update_interval, …)
-  net_arch: [256, 256]       # appliqué à pi/qf via policy_kwargs
-  seed: 0
-  save_freq_steps: 100000
-  device: auto
-eval:                          # nouveau — pilote ValidationCallback
-  eval_freq: 25000
-  n_eval_episodes: 50
-  validation_seed: 10000
-  test_seed: 20000
-  early_stopping_patience: 20
-  deterministic: true
-```
-
-`eval.eval_freq = 0` désactive l'eval périodique (compatible avec l'ancien
-fonctionnement smoke 200k de [`open_single_door_ppo.yaml`](configs/train/open_single_door_ppo.yaml)).
-
-## 9. Artefacts produits
-
-Pour chaque run `<run_id> = <task>_<algo>_seed<seed>_<timestamp>` :
-
-```text
-outputs/<run_id>/
-  monitor.csv                 ← reward / longueur d'épisode (SB3 Monitor)
-  training_curve.csv          ← export plot-friendly
-  validation_curve.csv        ← step / val_success / return / length / action magnitude / door angle
-  train_summary.json          ← run_id, algo, train/validation metrics, best step, best success, etc.
-  resolved_train_config.yaml  ← config résolue pour reproductibilité
-
-checkpoints/<run_id>/
-  best_model.zip              ← meilleur succès validation (à utiliser pour le rapport)
-  final_model.zip             ← état final
-  <algo>_<step>_steps.zip     ← checkpoints périodiques
-  <algo>_<step>_steps_replay_buffer.pkl ← replay buffer SAC pour reprise
-  <algo>_<step>_steps.json     ← métadonnées de reprise du checkpoint
-  final_model.json            ← métadonnées du checkpoint final
-
-outputs/eval/
-  eval_<algo>_<split>_<timestamp>.json
-  videos/eval_ep<NNN>_<timestamp>.mp4
-```
-
-Visualiser les courbes TensorBoard :
-
-```bash
-make tensorboard
-# puis ouvrir http://localhost:6006
-```
-
-## 10. Détection du surentraînement
-
-```mermaid
-flowchart LR
-    A[validation_curve.csv] --> B{train_succ - val_succ > 20%?}
-    B -- oui --> C[Surentraînement ✗]
-    B -- non --> D{val_succ stagne 10–20 evals?}
-    D -- oui --> C
-    D -- non --> E{best_validation_step proche du final ?}
-    E -- non --> F[Modèle a sur-fitté après best]
-    E -- oui --> G[OK ✓]
-    C --> H[Reporter best_model et NON final_model]
-    F --> H
-```
-
-La `ValidationCallback` arrête automatiquement l'entraînement si
-`eval.early_stopping_patience > 0` et que le succès n'a pas progressé
-pendant `patience` évaluations consécutives.
-
-## 11. Planning
-
-```text
-Lundi 4 mai     → SAC debug 300k → SAC principal 3M (nuit)
-Mardi 5 mai     → analyse SAC, SAC tuned 2M, PPO baseline 5M (nuit)
-Mercredi 6 mai  → analyse PPO, graphes, tableau comparatif, rédaction
-Jeudi 7 mai     → finalisation rapport, figures, rendu avant 23h59
-```
-
-Détail horaire dans
-[docs/planning_deadline_runs_rapport_rl_robocasa.md](docs/planning_deadline_runs_rapport_rl_robocasa.md).
-
-## 12. SLURM et calcul cluster
-
-Toujours pris en charge — les sbatch acceptent `CONFIG_PATH` pour basculer
-PPO ↔ SAC sans toucher au script.
-
-```bash
-# Train sur 3 seeds (array 0-2)
-sbatch --export=ALL,CONFIG_PATH=configs/train/open_single_door_sac.yaml \
-       scripts/slurm/train_array.sbatch
-
-# Eval d'un best checkpoint sur le split test
-sbatch --export=ALL,\
-CONFIG_PATH=configs/train/open_single_door_sac.yaml,\
-CHECKPOINT_PATH=checkpoints/<run_id>/best_model.zip,\
-SPLIT=test \
-       scripts/slurm/eval.sbatch
-```
-
-## 13. Documentation associée
-
-| Document | Sujet |
+| Condition | Interprétation |
 |---|---|
-| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Plan de runs, protocole, métriques, debug |
-| [docs/guide_general_prompting_projet_rl_robocasa_porte.md](docs/guide_general_prompting_projet_rl_robocasa_porte.md) | Méthode RL, hyperparamètres, reward shaping |
-| [docs/planning_deadline_runs_rapport_rl_robocasa.md](docs/planning_deadline_runs_rapport_rl_robocasa.md) | Deadline, planning quotidien, rapport |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Couches du projet et flux d'exécution |
-| [docs/METHODS.md](docs/METHODS.md) | Cadre méthodologique RL |
-| [docs/RUNBOOK.md](docs/RUNBOOK.md) | Procédures opératoires |
-| [docs/CI.md](docs/CI.md) | Pipeline GitHub Actions |
-| [docs/FILE_REFERENCE.md](docs/FILE_REFERENCE.md) | Référence fichier par fichier |
-| [docs/PACKAGES.md](docs/PACKAGES.md) | Dépendances Python et système |
+| `train_success − val_success > 20 %` | Surentraînement |
+| `val_success` stagne 20 évals consécutives | Convergence atteinte (early stopping) |
+| `best_step ≪ final_step` | Modèle a sur-fitté après le best |
+| `approach_frac > 0.5` | Reward hacking (hover) |
 
 ---
 
-> **Rappel critique** : le rapport doit présenter le **best checkpoint validation**,
-> pas le dernier. La métrique principale est le **validation success rate**.
+## Génération vidéo
+
+La génération vidéo utilise une approche **two-pass** pour contourner la limite de rendu dans les workers parallèles :
+- **Pass 1** : score N épisodes sans rendu (rapide)
+- **Pass 2** : re-joue le meilleur épisode avec le même seed (reproductible)
+
+**Critère de sélection** : `score = 1000×success + 100×θ_final + 10×θ_max + 1×return − 0.1×stagnation − 0.01×length`
+
+```bash
+# Génère la vidéo du meilleur épisode parmi 20
+make eval-video \
+  CONFIG=configs/train/open_single_door_sac.yaml \
+  CHECKPOINT=checkpoints/<run_id>/best_model.zip \
+  EPISODES=20 SEED=0
+```
+
+CLI direct :
+
+```bash
+uv run python -m robocasa_telecom.rl.eval_video \
+  --config configs/train/open_single_door_sac.yaml \
+  --checkpoint checkpoints/<run_id>/best_model.zip \
+  --episodes 20 --seed 0 \
+  --out outputs/eval/videos/
+```
+
+**Fichiers générés :**
+```text
+outputs/eval/videos/
+  <run_id>_best_episode_<ts>.mp4
+  <run_id>_worst_episode_<ts>.mp4
+  <run_id>_best_episode_metadata_<ts>.json
+  <run_id>_video_selection_debug_<ts>.csv
+```
+
+Documentation complète : [docs/video_generation.md](docs/video_generation.md)
+
+---
+
+## MLflow
+
+MLflow trace automatiquement toutes les métriques à chaque évaluation.
+
+### Lancer l'interface MLflow
+
+```bash
+uv run mlflow ui --backend-store-uri ./mlruns
+```
+
+Puis ouvrir : **http://127.0.0.1:5000**
+
+Si le port 5000 est occupé :
+
+```bash
+uv run mlflow ui --backend-store-uri ./mlruns --port 5001
+```
+
+### Métriques loggées
+
+- `train/reward_hack/*` : fractions intra-épisode (approach, stagnation, oscillation)
+- `validation/*` : success_rate, return_mean, door_angle_final, door_angle_max, sign_changes, stagnation_steps, approach_frac
+- `eval_video/*` : métriques du meilleur épisode après run complet
+
+### Générer les courbes PNG
+
+```bash
+make plot PLOT_RUNS="outputs/OpenCabinet_SAC_seed0_*/" SMOOTH=3
+# → outputs/plots/success_rate.png, summary.png, door_angle.png, ...
+```
+
+Comparaison multi-runs :
+
+```bash
+uv run python scripts/plot_training.py \
+  --run outputs/OpenCabinet_SAC_seed0_*/ outputs/OpenCabinet_PPO_seed0_*/ \
+  --label "SAC seed0" "PPO seed0" \
+  --out outputs/plots/
+```
+
+### TensorBoard
+
+```bash
+make tensorboard
+# → http://localhost:6006
+```
+
+---
+
+## Résultats
+
+> **Note** : cette section est mise à jour après chaque run complet. Les placeholders `[À compléter]` seront remplis avec les valeurs réelles.
+
+### Tableau comparatif
+
+| Run | Algo | Steps | Val. Success Rate | Test Success Rate | Best Step | Écart train/val |
+|---|---|---:|---:|---:|---:|---|
+| SAC debug | SAC | 300k | [À compléter] | — | [À compléter] | [À compléter] |
+| SAC principal | SAC | 3M | [À compléter] | [À compléter] | [À compléter] | [À compléter] |
+| SAC tuned | SAC | 2M | [À compléter] | [À compléter] | [À compléter] | [À compléter] |
+| PPO baseline | PPO | 5M | [À compléter] | [À compléter] | [À compléter] | [À compléter] |
+
+### Métriques anti-hacking (SAC principal)
+
+| Métrique | Valeur finale |
+|---|---|
+| `approach_frac_mean` | [À compléter] |
+| `stagnation_steps_mean` | [À compléter] |
+| `sign_changes_mean` | [À compléter] |
+| `door_angle_max_mean` | [À compléter] |
+
+Documentation et analyse complètes : [docs/results.md](docs/results.md)
+
+---
+
+## Reproductibilité
+
+| Élément | Mécanisme |
+|---|---|
+| Python | 3.11, fixé dans `pyproject.toml` |
+| Dépendances | `uv.lock` — versions exactes gelées |
+| RoboCasa/RoboSuite | Commits figés dans `setup_uv.sh` |
+| Seeds | Explicites dans config (`seed: 0`) et CLI (`--seed`) |
+| Configs | `resolved_train_config.yaml` sauvegardé par run |
+| Checkpoints | `best_model.zip` + `replay_buffer.pkl` pour reprise SAC |
+| Évaluation | Seeds séparés : `validation_seed=10000`, `test_seed=20000` |
+
+**Reproduire un run depuis zéro :**
+
+```bash
+git clone https://github.com/YiZeems/robocasa-project-B.git && cd robocasa-project-B
+bash scripts/setup_uv.sh
+make train-sac SEED=0
+make eval-test CONFIG=configs/train/open_single_door_sac.yaml \
+               CHECKPOINT=checkpoints/<run_id>/best_model.zip EPISODES=50
+```
+
+Documentation complète : [docs/reproducibility.md](docs/reproducibility.md)
+
+---
+
+## Troubleshooting
+
+| Symptôme | Solution |
+|---|---|
+| `.venv` manquant | `bash scripts/setup_uv.sh` |
+| Assets manquants | `DOWNLOAD_ASSETS=1 VERIFY_ASSETS=1 bash scripts/setup_uv.sh` |
+| Port 5000 occupé (MLflow) | `uv run mlflow ui --port 5001` |
+| Reward haute mais 0 % succès | Hover hacking — vérifier `approach_frac > 0.5` dans MLflow |
+| Run reprend en boucle | `--no-auto-resume` pour forcer un départ neuf |
+| Vidéo vide / noire | Vérifier `has_offscreen_renderer: true` dans la config ou utiliser `eval_video.py` |
+| OOM avec 12 workers | Réduire `n_envs` dans le YAML |
+| Warnings `mink`, `mimicgen` | Non bloquants — connus, hérités des dépendances amont |
+
+Documentation complète : [docs/troubleshooting.md](docs/troubleshooting.md)
+
+---
+
+## Checklist de rendu
+
+- [ ] `make sanity` passe sans erreur
+- [ ] Au moins un run SAC complet (3M) terminé
+- [ ] `best_model.zip` présent dans `checkpoints/`
+- [ ] `make eval-test` exécuté sur `best_model.zip` — résultats dans `outputs/eval/`
+- [ ] Courbes `make plot` générées dans `outputs/plots/`
+- [ ] Vidéo du meilleur épisode générée : `make eval-video`
+- [ ] MLflow UI : métriques visibles sur http://127.0.0.1:5000
+- [ ] `docs/results.md` rempli avec les valeurs réelles
+- [ ] `docs/project_report.md` finalisé
+
+Checklist complète : [docs/submission_checklist.md](docs/submission_checklist.md)
+
+---
+
+## Références
+
+| Référence | Lien |
+|---|---|
+| RoboCasa (Nasiriany et al., 2024) | https://robocasa.ai |
+| RoboSuite (Zhu et al., 2020) | https://robosuite.ai |
+| SAC (Haarnoja et al., 2018) | https://arxiv.org/abs/1801.01290 |
+| PPO (Schulman et al., 2017) | https://arxiv.org/abs/1707.06347 |
+| Stable-Baselines3 | https://stable-baselines3.readthedocs.io |
+| MuJoCo | https://mujoco.org |
+| Gymnasium | https://gymnasium.farama.org |
+
+---
+
+## Documentation associée
+
+| Document | Contenu |
+|---|---|
+| [docs/project_report.md](docs/project_report.md) | Rapport académique complet pour le professeur |
+| [docs/reward_shaping.md](docs/reward_shaping.md) | Reward shaping détaillé — formules, coefficients, anti-hacking |
+| [docs/metrics.md](docs/metrics.md) | Définition et interprétation de toutes les métriques |
+| [docs/experiments.md](docs/EXPERIMENTS.md) | Protocole expérimental, commandes, tableau des runs |
+| [docs/video_generation.md](docs/video_generation.md) | Guide de génération vidéo two-pass |
+| [docs/reproducibility.md](docs/reproducibility.md) | Guide de reproductibilité complet |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Résolution des problèmes courants |
+| [docs/results.md](docs/results.md) | Résultats, courbes et interprétation |
+| [docs/submission_checklist.md](docs/submission_checklist.md) | Checklist de rendu |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture technique détaillée |
+| [docs/METHODS.md](docs/METHODS.md) | Cadre méthodologique RL |
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | Procédures opératoires step-by-step |
+
+---
+
+> **Rappel** : pour le rapport, toujours utiliser **`best_model.zip`** (meilleur succès validation), **jamais** `final_model.zip`. La métrique principale est le **validation success rate**.
