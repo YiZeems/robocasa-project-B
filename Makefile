@@ -5,10 +5,13 @@ CHECKPOINT ?= checkpoints/<run_id>/best_model.zip
 EPISODES ?= 20
 PLOT_RUNS ?= outputs/OpenCabinet_SAC_seed0_*/
 SMOOTH ?= 3
+VIDEO_OUT ?= outputs/eval/videos
+VIDEO_FPS ?= 20
 
 .PHONY: setup sanity check tensorboard \
         train train-sac-debug train-sac train-sac-tuned train-ppo-baseline \
         eval eval-validation eval-test \
+        eval-video \
         render-best-run plot \
         slurm-train slurm-eval slurm-render-best-run
 
@@ -58,6 +61,12 @@ eval-test:
 	uv run python -m robocasa_telecom.evaluate \
 	  --config $(CONFIG) --checkpoint $(CHECKPOINT) \
 	  --num-episodes $(EPISODES) --split test --deterministic
+
+eval-video:
+	uv run python -m robocasa_telecom.rl.eval_video \
+	  --config $(CONFIG) --checkpoint $(CHECKPOINT) \
+	  --episodes $(EPISODES) --seed $(SEED) \
+	  --out $(VIDEO_OUT) --fps $(VIDEO_FPS)
 
 render-best-run:
 	uv run python -m robocasa_telecom.render_best_run \
