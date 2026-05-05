@@ -13,6 +13,7 @@ import argparse
 import csv
 import functools
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,9 +37,15 @@ from ..utils.checkpoints import (
 from ..envs.factory import EnvConfig, load_env_config, make_env_from_config
 from ..utils.metrics import prefixed_metrics, summarize_rollout_episodes
 from ..utils.io import ensure_dir, load_yaml
+from .render_best_run import render_best_checkpoint_video
 
 
 SUPPORTED_ALGOS = {"PPO", "SAC"}
+BEST_RUN_VIDEO_ENV = "ROBOCASA_RENDER_BEST_RUN_VIDEO"
+BEST_RUN_VIDEO_MAX_STEPS_ENV = "ROBOCASA_RENDER_BEST_RUN_VIDEO_MAX_STEPS"
+BEST_RUN_VIDEO_FPS_ENV = "ROBOCASA_RENDER_BEST_RUN_VIDEO_FPS"
+BEST_RUN_VIDEO_MIN_SECONDS_ENV = "ROBOCASA_RENDER_BEST_RUN_VIDEO_MIN_SECONDS"
+BEST_RUN_VIDEO_MAX_EPISODES_ENV = "ROBOCASA_RENDER_BEST_RUN_VIDEO_MAX_EPISODES"
 
 
 def parse_args() -> argparse.Namespace:
@@ -163,6 +170,35 @@ def _resolve_policy_kwargs(train_cfg: dict[str, Any]) -> dict[str, Any]:
     return policy_kwargs
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse a boolean environment variable."""
+
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(
+        f"Environment variable {name} must be 0/1/true/false/yes/no/on/off, got {raw!r}"
+    )
+
+
+def _env_int(name: str, default: int) -> int:
+    """Parse an integer environment variable."""
+
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {name} must be an integer, got {raw!r}") from exc
+
+
 class MLflowMetricsCallback(BaseCallback):
     """Forward SB3 rollout/train logger entries to the active MLflow run."""
 
@@ -175,6 +211,71 @@ class MLflowMetricsCallback(BaseCallback):
                     mlflow.log_metric(key, float(value), step=self.num_timesteps)
                 except Exception:
                     pass
+        return True
+
+
+class RewardHackMonitorCallback(BaseCallback):
+    """Accumulate per-episode reward component stats and log to MLflow.
+
+    With SubprocVecEnv each worker emits episode_reward_components in info
+    when the episode ends (done=True). This callback aggregates across workers
+    and logs episode-level means once per eval_freq timesteps.
+
+    Metrics logged (prefix reward_hack/):
+      - approach_frac   : fraction of total reward from approach (hover hacking signal)
+      - progress_frac   : fraction from progress (main learning signal)
+      - success_frac    : fraction from success bonus
+      - stagnation_eps  : rate of episodes that fired the stagnation penalty
+      - theta_best_mean : mean best door angle per episode
+    """
+
+    def __init__(self, log_freq: int = 25_000):
+        super().__init__()
+        self._log_freq = log_freq
+        self._last_log_t = 0
+        self._reset_buffers()
+
+    def _reset_buffers(self) -> None:
+        self._ep_approach:   list[float] = []
+        self._ep_progress:   list[float] = []
+        self._ep_success:    list[float] = []
+        self._ep_total:      list[float] = []
+        self._ep_stagnation: list[float] = []
+        self._ep_theta_best: list[float] = []
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            comp = info.get("episode_reward_components")
+            if comp is None:
+                continue
+            total = comp.get("total", 0.0)
+            self._ep_approach.append(comp.get("approach", 0.0))
+            self._ep_progress.append(comp.get("progress", 0.0))
+            self._ep_success.append(comp.get("success",  0.0))
+            self._ep_total.append(total)
+            self._ep_stagnation.append(1.0 if comp.get("stagnation", 0.0) < -1e-6 else 0.0)
+            self._ep_theta_best.append(info.get("reward_components", {}).get("theta_best", 0.0))
+
+        if self.num_timesteps - self._last_log_t >= self._log_freq and self._ep_total:
+            self._last_log_t = self.num_timesteps
+            n = len(self._ep_total)
+            total_mean = float(np.mean(self._ep_total)) if self._ep_total else 1e-8
+            denom = max(abs(total_mean), 1e-8)
+
+            try:
+                mlflow.log_metrics({
+                    "reward_hack/approach_frac":   float(np.mean(self._ep_approach)) / denom,
+                    "reward_hack/progress_frac":   float(np.mean(self._ep_progress)) / denom,
+                    "reward_hack/success_frac":    float(np.mean(self._ep_success))  / denom,
+                    "reward_hack/stagnation_rate": float(np.mean(self._ep_stagnation)),
+                    "reward_hack/episodes":        float(n),
+                }, step=self.num_timesteps)
+            except Exception:
+                pass
+
+            self._reset_buffers()
+
         return True
 
 
@@ -759,6 +860,11 @@ def main() -> None:
     args = parse_args()
     cfg = load_yaml(args.config)
     ctx = _resolve_run_context(cfg, args)
+    best_run_video_enabled = _env_flag(BEST_RUN_VIDEO_ENV, False)
+    best_run_video_fps = _env_int(BEST_RUN_VIDEO_FPS_ENV, 20)
+    best_run_video_max_steps = _env_int(BEST_RUN_VIDEO_MAX_STEPS_ENV, 500)
+    best_run_video_min_seconds = _env_int(BEST_RUN_VIDEO_MIN_SECONDS_ENV, 12)
+    best_run_video_max_episodes = _env_int(BEST_RUN_VIDEO_MAX_EPISODES_ENV, 5)
 
     output_root = ensure_dir(ctx.paths_cfg.get("output_root", "outputs"))
     checkpoint_root = ensure_dir(ctx.paths_cfg.get("checkpoint_root", "checkpoints"))
@@ -804,6 +910,11 @@ def main() -> None:
         mlflow.log_param("resume_from", ctx.resume_from or "")
         mlflow.log_param("eval_freq", int(ctx.eval_cfg.get("eval_freq", 0)))
         mlflow.log_param("n_eval_episodes", int(ctx.eval_cfg.get("n_eval_episodes", 0)))
+        mlflow.log_param("best_run_video_enabled", best_run_video_enabled)
+        mlflow.log_param("best_run_video_fps", best_run_video_fps)
+        mlflow.log_param("best_run_video_max_steps", best_run_video_max_steps)
+        mlflow.log_param("best_run_video_min_seconds", best_run_video_min_seconds)
+        mlflow.log_param("best_run_video_max_episodes", best_run_video_max_episodes)
         mlflow.log_param(
             "early_stopping_patience",
             int(ctx.eval_cfg.get("early_stopping_patience", 0)),
@@ -838,7 +949,11 @@ def main() -> None:
         remaining_timesteps = max(0, int(ctx.total_timesteps) - resume_start_timesteps)
         final_step = resume_start_timesteps
 
-        callbacks: list[BaseCallback] = [MLflowMetricsCallback()]
+        eval_freq = int(ctx.eval_cfg.get("eval_freq", 25_000))
+        callbacks: list[BaseCallback] = [
+            MLflowMetricsCallback(),
+            RewardHackMonitorCallback(log_freq=eval_freq),
+        ]
 
         save_freq_steps = int(ctx.train_cfg.get("save_freq_steps", 50_000))
         if save_freq_steps > 0:
@@ -853,7 +968,6 @@ def main() -> None:
                 )
             )
 
-        eval_freq = int(ctx.eval_cfg.get("eval_freq", 0))
         if eval_freq > 0:
             validation_seed = int(
                 ctx.eval_cfg.get("validation_seed", ctx.seed + 10_000)
@@ -1027,6 +1141,42 @@ def main() -> None:
                 final_metrics["success_rate"] - val_callback.best_success,
                 step=final_step,
             )
+
+        summary["best_run_video_enabled"] = best_run_video_enabled
+        summary["best_run_video_fps"] = best_run_video_fps
+        summary["best_run_video_max_steps"] = best_run_video_max_steps
+        summary["best_run_video_min_seconds"] = best_run_video_min_seconds
+        summary["best_run_video_max_episodes"] = best_run_video_max_episodes
+        if best_run_video_enabled:
+            best_video_output_dir = ensure_dir(run_output_dir / "videos")
+            best_video_output_path = (
+                best_video_output_dir / f"{ctx.run_id}_best_arm_views.mp4"
+            )
+            try:
+                video_metadata = render_best_checkpoint_video(
+                    ctx.env_cfg,
+                    run_checkpoint_dir,
+                    algorithm=ctx.algorithm,
+                    device=ctx.train_cfg.get("device", "auto"),
+                    seed=ctx.seed,
+                    output=best_video_output_path,
+                    video_fps=best_run_video_fps,
+                    max_steps=best_run_video_max_steps,
+                    min_seconds=best_run_video_min_seconds,
+                    max_episodes=best_run_video_max_episodes,
+                )
+                summary["best_run_video"] = video_metadata["video_path"]
+                summary["best_run_video_metadata"] = video_metadata["metadata_path"]
+                summary["best_run_video_source"] = video_metadata["checkpoint"]
+                summary["best_run_video_frames"] = video_metadata["num_frames"]
+                try:
+                    mlflow.log_artifact(video_metadata["video_path"])
+                    mlflow.log_artifact(video_metadata["metadata_path"])
+                except Exception as exc:
+                    print(f"[train] Warning: failed to log best-run video artifact: {exc}")
+            except Exception as exc:
+                summary["best_run_video_error"] = str(exc)
+                print(f"[train] Warning: failed to render best-run video: {exc}")
 
         with (run_output_dir / "train_summary.json").open("w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
