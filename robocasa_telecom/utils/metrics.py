@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
+from stable_baselines3.common.vec_env import VecEnv
 
 from .success import infer_success
 
@@ -197,7 +198,11 @@ def summarize_rollout_episodes(
     door_angles: list[float] = []
 
     for ep in range(episodes):
-        obs, _ = env.reset(seed=seed + ep)
+        if isinstance(env, VecEnv):
+            env.seed(seed + ep)
+            obs = env.reset()
+        else:
+            obs, _ = env.reset(seed=seed + ep)
         done = False
         ep_return = 0.0
         ep_length = 0

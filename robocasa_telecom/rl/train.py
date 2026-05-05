@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import functools
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,7 +24,6 @@ import yaml
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecMonitor
 
 from ..utils.checkpoints import (
@@ -317,6 +317,7 @@ class ValidationCallback(BaseCallback):
         self._best_step: int = 0
         self._no_improve_evals: int = 0
         self._history: list[dict[str, float]] = []
+        self._last_eval_timestep: int = -1
 
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
         self._best_model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -360,8 +361,9 @@ class ValidationCallback(BaseCallback):
         return int(self._best_step)
 
     def _on_step(self) -> bool:
-        if self.n_calls == 0 or self.n_calls % self._eval_freq != 0:
+        if self.num_timesteps - self._last_eval_timestep < self._eval_freq:
             return True
+        self._last_eval_timestep = self.num_timesteps
 
         metrics = _evaluate_policy(
             self.model,
@@ -469,6 +471,7 @@ class PeriodicCheckpointCallback(BaseCallback):
         self._run_id = str(run_id)
         self._save_replay_buffer = bool(save_replay_buffer)
         self._save_path.mkdir(parents=True, exist_ok=True)
+        self._last_checkpoint_timestep: int = 0
 
     def _save_checkpoint(self, suffix: str) -> None:
         model_path = self._save_path / f"{self._name_prefix}_{suffix}_steps.zip"
@@ -494,8 +497,9 @@ class PeriodicCheckpointCallback(BaseCallback):
         )
 
     def _on_step(self) -> bool:
-        if self.n_calls == 0 or self.n_calls % self._save_freq != 0:
+        if self.num_timesteps - self._last_checkpoint_timestep < self._save_freq:
             return True
+        self._last_checkpoint_timestep = self.num_timesteps
 
         self._save_checkpoint(str(self.num_timesteps))
         if self.verbose:
@@ -672,16 +676,29 @@ def _build_model_for_resume(
         "tensorboard_log": None,
         "print_system_info": False,
     }
-    if ctx.algorithm == "PPO":
-        model = PPO.load(str(resume_artifact.model_path), **load_kwargs)
-    elif ctx.algorithm == "SAC":
-        model = SAC.load(str(resume_artifact.model_path), **load_kwargs)
-    else:  # pragma: no cover - guarded by config validation.
-        raise ValueError(f"Unsupported algorithm: {ctx.algorithm}")
+    try:
+        if ctx.algorithm == "PPO":
+            model = PPO.load(str(resume_artifact.model_path), **load_kwargs)
+        elif ctx.algorithm == "SAC":
+            model = SAC.load(str(resume_artifact.model_path), **load_kwargs)
+        else:  # pragma: no cover - guarded by config validation.
+            raise ValueError(f"Unsupported algorithm: {ctx.algorithm}")
+    except ValueError as exc:
+        print(
+            f"[train] Checkpoint incompatible ({exc}); starting fresh model instead."
+        )
+        return _build_model(ctx.algorithm, train_env, ctx.train_cfg, ctx.seed)
 
     if ctx.algorithm == "SAC" and resume_artifact.replay_buffer_path.exists():
         try:
+            fresh_rb = model.replay_buffer  # already sized for current n_envs
             model.load_replay_buffer(str(resume_artifact.replay_buffer_path))
+            if model.replay_buffer.n_envs != model.n_envs:
+                print(
+                    f"[train] Replay buffer n_envs={model.replay_buffer.n_envs} != "
+                    f"env n_envs={model.n_envs}; discarding loaded buffer"
+                )
+                model.replay_buffer = fresh_rb
         except Exception as exc:  # pragma: no cover - best-effort resume.
             print(
                 f"[train] Warning: failed to restore replay buffer from "
@@ -691,6 +708,19 @@ def _build_model_for_resume(
     return model
 
 
+def _worker_env_init(
+    env_cfg: EnvConfig,
+    seed: int,
+    reference_obs_space: Any,
+) -> Any:
+    """Module-level factory for SubprocVecEnv workers (must be picklable for spawn).
+
+    Defined at module level so multiprocessing.spawn can pickle it by reference.
+    Each worker imports robosuite/robocasa independently in its fresh subprocess.
+    """
+    return make_env_from_config(env_cfg, seed=seed, reference_obs_space=reference_obs_space)
+
+
 def _make_vec_env(
     env_cfg: EnvConfig,
     n_envs: int,
@@ -698,33 +728,29 @@ def _make_vec_env(
     monitor_dir: Path,
     reference_obs_space: Any = None,
 ) -> Any:
-    """Build a SubprocVecEnv with n_envs parallel workers.
+    """Build a parallel VecEnv with n_envs workers.
 
-    Each worker gets a unique seed (base_seed + worker_index) so scenes differ.
-    Monitor CSVs are written per-worker inside monitor_dir.
+    Uses SubprocVecEnv (spawn) for n_envs > 1 so each worker runs in its own
+    clean process — safe on macOS/Apple Silicon with MPS.
+    Each worker gets a unique seed so scenes and object layouts differ.
     """
+    from stable_baselines3.common.vec_env import DummyVecEnv
     monitor_dir.mkdir(parents=True, exist_ok=True)
 
-    def _make_env(rank: int):
-        def _init():
-            env = make_env_from_config(
-                env_cfg,
-                seed=base_seed + rank,
-                reference_obs_space=reference_obs_space,
-            )
-            env = Monitor(env, filename=str(monitor_dir / f"worker_{rank}"))
-            return env
-        return _init
+    factories = [
+        functools.partial(
+            _worker_env_init,
+            env_cfg,
+            base_seed + i,
+            reference_obs_space,
+        )
+        for i in range(n_envs)
+    ]
 
     if n_envs == 1:
-        single = _make_env(0)()
-        from stable_baselines3.common.vec_env import DummyVecEnv
-        return DummyVecEnv([lambda: single])
+        return DummyVecEnv(factories)
 
-    return SubprocVecEnv(
-        [_make_env(i) for i in range(n_envs)],
-        start_method="fork",  # fork is safe on macOS/Linux; avoids re-importing heavy libs
-    )
+    return SubprocVecEnv(factories, start_method="spawn")
 
 
 def main() -> None:
@@ -748,15 +774,13 @@ def main() -> None:
     reference_obs_space = _ref_env.observation_space
     _ref_env.close()
 
-    monitor_dir = run_output_dir / "monitors"
     train_env = _make_vec_env(
         ctx.env_cfg,
         n_envs=n_envs,
         base_seed=ctx.seed,
-        monitor_dir=monitor_dir,
+        monitor_dir=run_output_dir / "monitors",
         reference_obs_space=reference_obs_space,
     )
-    # VecMonitor aggregates episode stats from all workers for SB3 logging.
     monitor_path = run_output_dir / "monitor.csv"
     train_env = VecMonitor(train_env, filename=str(monitor_path))
     model: BaseAlgorithm | None = None
@@ -889,12 +913,18 @@ def main() -> None:
             extra={"target_total_timesteps": int(ctx.total_timesteps)},
         )
 
+        _final_eval_env = make_env_from_config(
+            ctx.env_cfg,
+            seed=ctx.seed,
+            reference_obs_space=train_env.observation_space,
+        )
         final_metrics = _evaluate_policy(
             model,
-            train_env,
+            _final_eval_env,
             episodes=int(ctx.train_cfg.get("eval_episodes", 5)),
             seed=ctx.seed,
         )
+        _final_eval_env.close()
         final_step = int(getattr(model, "num_timesteps", resume_start_timesteps))
 
         _export_training_curve(monitor_path, run_output_dir / "training_curve.csv")
