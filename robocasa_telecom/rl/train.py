@@ -82,6 +82,15 @@ def parse_args() -> argparse.Namespace:
         help="Override number of parallel workers (must be even, e.g. 2, 4, 6, 12)",
     )
     parser.add_argument(
+        "--vec-env",
+        choices=("subproc", "dummy"),
+        default=None,
+        help=(
+            "VecEnv backend: 'subproc' (default, parallel) or 'dummy' (single-process,"
+            " useful on Windows or for debugging)"
+        ),
+    )
+    parser.add_argument(
         "--resume-from",
         default=None,
         help="Resume training from a checkpoint zip, checkpoint directory, or checkpoint metadata JSON.",
@@ -111,6 +120,7 @@ class RunContext:
     resume_artifact: CheckpointArtifact | None
     auto_resume: bool
     n_envs_override: int | None
+    vec_env_backend: str | None  # "subproc" | "dummy" | None (auto)
 
 
 def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> RunContext:
@@ -174,6 +184,7 @@ def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> RunCo
         resume_artifact=resume_artifact,
         auto_resume=bool(getattr(args, "auto_resume", True)),
         n_envs_override=getattr(args, "n_envs", None),
+        vec_env_backend=getattr(args, "vec_env", None),
     )
 
 
@@ -859,11 +870,13 @@ def _make_vec_env(
     base_seed: int,
     monitor_dir: Path,
     reference_obs_space: Any = None,
+    vec_env_backend: str | None = None,
 ) -> Any:
     """Build a parallel VecEnv with n_envs workers.
 
     Uses SubprocVecEnv (spawn) for n_envs > 1 so each worker runs in its own
     clean process — safe on macOS/Apple Silicon with MPS.
+    Pass vec_env_backend="dummy" to force single-process mode (Windows debug).
     Each worker gets a unique seed so scenes and object layouts differ.
     """
     from stable_baselines3.common.vec_env import DummyVecEnv
@@ -879,7 +892,8 @@ def _make_vec_env(
         for i in range(n_envs)
     ]
 
-    if n_envs == 1:
+    use_dummy = (n_envs == 1) or (vec_env_backend == "dummy")
+    if use_dummy:
         return DummyVecEnv(factories)
 
     return SubprocVecEnv(factories, start_method="spawn")
@@ -917,6 +931,7 @@ def main() -> None:
         base_seed=ctx.seed,
         monitor_dir=run_output_dir / "monitors",
         reference_obs_space=reference_obs_space,
+        vec_env_backend=ctx.vec_env_backend,
     )
     monitor_path = run_output_dir / "monitor.csv"
     train_env = VecMonitor(train_env, filename=str(monitor_path))

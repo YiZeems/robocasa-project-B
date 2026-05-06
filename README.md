@@ -322,7 +322,15 @@ robocasa-project-B/
 
 ## Installation
 
-**Pré-requis :** `uv`, `git`, Python ≥ 3.11. macOS/Linux. Windows via WSL.
+**Compatibilité plateformes :** macOS Apple Silicon (MPS/CPU), Linux/WSL2 (CUDA), Windows 11 (CUDA). Voir [docs/platform_compatibility.md](docs/platform_compatibility.md) pour les instructions détaillées par OS.
+
+**Pré-requis communs :** `uv`, `git`, Python ≥ 3.11.
+
+| OS | Pré-requis supplémentaires |
+|---|---|
+| macOS Apple Silicon | `brew install cmake` |
+| Windows 11 | Visual C++ Build Tools 2022, CUDA Toolkit 12.x |
+| WSL2 / Linux | `sudo apt install cmake libgl1-mesa-glx`, drivers NVIDIA |
 
 ```bash
 # Cloner le repo
@@ -352,6 +360,7 @@ bash scripts/setup_uv.sh
 **Vérification post-installation :**
 
 ```bash
+pytest tests/test_platform_smoke.py -v   # smoke tests cross-plateforme (11 tests, < 5s)
 make check    # compile + pip check
 make sanity   # smoke test reset/step 20 pas
 ```

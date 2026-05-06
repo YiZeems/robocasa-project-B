@@ -20,6 +20,8 @@ from .reward import AntiHackingReward, RewardConfig
 # user did not set MUJOCO_GL explicitly. Headless Linux (WSL2, Slurm) needs
 # 'egl' or 'osmesa'; macOS uses 'cgl'; Windows uses 'wgl'. Override anytime
 # with `export MUJOCO_GL=osmesa` etc.
+# Windows note: 'wgl' requires an active OpenGL context (display or virtual).
+# If rendering fails on Windows, try: set MUJOCO_GL=osmesa before running.
 if "MUJOCO_GL" not in os.environ:
     if sys.platform == "linux":
         os.environ["MUJOCO_GL"] = "egl"

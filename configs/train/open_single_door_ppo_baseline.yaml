@@ -27,10 +27,11 @@ train:
   max_grad_norm: 0.5
   net_arch: [256, 256]
 
+  n_envs: 12
   seed: 0
   save_freq_steps: 100000
   eval_episodes: 5
-  device: auto
+  device: auto   # resolved to cuda > mps > cpu by utils/device.resolve_device
 
 eval:
   eval_freq: 25000
