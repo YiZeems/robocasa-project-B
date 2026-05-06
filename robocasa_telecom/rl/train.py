@@ -86,8 +86,8 @@ def parse_args() -> argparse.Namespace:
         choices=("subproc", "dummy"),
         default=None,
         help=(
-            "VecEnv backend: 'subproc' (default, parallel) or 'dummy' (single-process,"
-            " useful on Windows or for debugging)"
+            "VecEnv backend: 'subproc' (default, parallel, uses fork) or 'dummy'"
+            " (single-process, useful for debugging)"
         ),
     )
     parser.add_argument(
@@ -329,6 +329,7 @@ class RewardHackMonitorCallback(BaseCallback):
                     "reward_hack/oscillation_steps_mean":float(np.mean(self._ep_oscillation_steps)),
                     "reward_hack/sign_changes_mean":     float(np.mean(self._ep_sign_changes)),
                     "reward_hack/reward_without_success":float(np.mean(failed_returns)) if failed_returns else float(np.mean(self._ep_total)),
+                    "reward_hack/train_success_rate":    float(np.mean(self._ep_success_flag)),
                     "reward_hack/episodes":              float(n),
                 }, step=self.num_timesteps)
             except Exception:
@@ -856,11 +857,6 @@ def _worker_env_init(
     seed: int,
     reference_obs_space: Any,
 ) -> Any:
-    """Module-level factory for SubprocVecEnv workers (must be picklable for spawn).
-
-    Defined at module level so multiprocessing.spawn can pickle it by reference.
-    Each worker imports robosuite/robocasa independently in its fresh subprocess.
-    """
     return make_env_from_config(env_cfg, seed=seed, reference_obs_space=reference_obs_space)
 
 
@@ -874,9 +870,9 @@ def _make_vec_env(
 ) -> Any:
     """Build a parallel VecEnv with n_envs workers.
 
-    Uses SubprocVecEnv (spawn) for n_envs > 1 so each worker runs in its own
-    clean process — safe on macOS/Apple Silicon with MPS.
-    Pass vec_env_backend="dummy" to force single-process mode (Windows debug).
+    Uses SubprocVecEnv (fork) for n_envs > 1 — fork is the Linux/WSL default
+    and avoids the slow re-import overhead of spawn.
+    Pass vec_env_backend="dummy" to force single-process mode (for debugging).
     Each worker gets a unique seed so scenes and object layouts differ.
     """
     from stable_baselines3.common.vec_env import DummyVecEnv
@@ -896,7 +892,7 @@ def _make_vec_env(
     if use_dummy:
         return DummyVecEnv(factories)
 
-    return SubprocVecEnv(factories, start_method="spawn")
+    return SubprocVecEnv(factories, start_method="fork")
 
 
 def main() -> None:

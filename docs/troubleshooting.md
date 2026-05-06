@@ -94,11 +94,11 @@ MUJOCO_GL=osmesa uv run python -m robocasa_telecom.train ...
 
 ---
 
-### `SubprocVecEnv` / erreur pickling sur Windows
+### `SubprocVecEnv` / erreur au démarrage des workers
 
-**Symptôme :** `PicklingError`, `AttributeError: Can't pickle local object` ou freeze au démarrage des workers.
+**Symptôme :** freeze ou crash au démarrage des workers parallèles.
 
-**Cause :** `spawn` sur Windows requiert que les fonctions passées aux workers soient importables au niveau module (pas de lambdas ni de closures). Le projet utilise `_worker_env_init` défini au niveau module — si l'erreur apparaît, c'est un problème de path ou d'import.
+**Cause :** problème d'import ou de path dans le subprocess forké.
 
 **Solution immédiate :** passer en single-process avec `--vec-env dummy` pour isoler le problème :
 
