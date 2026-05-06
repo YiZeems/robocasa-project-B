@@ -52,6 +52,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 
 from ..envs.factory import EnvConfig, load_env_config, make_env_from_config
 from ..utils.checkpoints import resolve_run_checkpoint_path
+from ..utils.device import resolve_device
 from ..utils.io import ensure_dir, load_yaml
 from ..utils.metrics import DOOR_ANGLE_KEYS, extract_scalar_metric
 from ..utils.success import infer_success
@@ -492,6 +493,11 @@ def main() -> None:
     env_cfg = load_env_config(env_cfg_path)
     algorithm = _resolve_algorithm(cfg, args.algorithm)
 
+    # Anchor MLflow at an absolute file:// URI (works on Windows, any cwd).
+    mlruns_dir = Path(cfg.get("paths", {}).get("mlruns_dir", "mlruns")).resolve()
+    mlruns_dir.mkdir(parents=True, exist_ok=True)
+    mlflow.set_tracking_uri(mlruns_dir.as_uri())
+
     checkpoint_path = resolve_run_checkpoint_path(args.checkpoint, preference="best")
     out_dir = Path(args.out) if args.out else ensure_dir(
         Path(cfg.get("paths", {}).get("output_root", "outputs")) / "eval" / "videos"
@@ -507,7 +513,7 @@ def main() -> None:
         deterministic=args.deterministic,
         out_dir=out_dir,
         video_fps=args.fps,
-        device=cfg.get("train", {}).get("device", "auto"),
+        device=resolve_device(cfg.get("train", {}).get("device", "auto")),
         mlflow_run_id=args.mlflow_run_id,
         save_worst=not args.no_worst,
     )
