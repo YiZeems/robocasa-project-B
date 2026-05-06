@@ -21,6 +21,8 @@ dependencies = [
   "imageio>=2.34,<3",
   "imageio-ffmpeg>=0.5",
   "pytest>=8,<9",
+  "torch==2.7.1",
+  "torchvision==0.22.1",
   "robocasa==1.0.0",
   "robosuite==1.5.2",
   "robosuite_models==1.0.0",
@@ -39,5 +41,16 @@ robocasa-telecom-render-best-run = "robocasa_telecom.render_best_run:main"
 robocasa-telecom-sanity = "robocasa_telecom.sanity:main"
 
 [tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
 robocasa = { path = "external/robocasa" }
 robosuite = { path = "external/robosuite" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
