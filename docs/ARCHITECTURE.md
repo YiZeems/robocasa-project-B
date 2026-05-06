@@ -59,7 +59,7 @@ Cette séparation permet de garder la logique métier testable hors cluster, d'a
 3. `resolve_device(cfg["train"]["device"])` → string `"cuda"` / `"mps"` / `"cpu"`.
 4. `_make_vec_env(n_envs, vec_env_backend)` :
    - `vec_env_backend="dummy"` ou `n_envs=1` → `DummyVecEnv` (single-process).
-   - Sinon → `SubprocVecEnv(start_method="spawn")` (multiprocessing, safe sur macOS/Windows).
+   - Sinon → `SubprocVecEnv(start_method="fork")` (multiprocessing, Linux/WSL2).
 5. Chargement ou construction du modèle PPO/SAC.
 6. `model.learn(...)` avec `PeriodicCheckpointCallback` + `ValidationCallback`.
 7. `ValidationCallback` : rollouts périodiques sur seed=10000, sauvegarde `best_model.zip` si succès améliore.
@@ -74,7 +74,7 @@ flowchart TD
     B --> D[_make_vec_env]
     D --> E{n_envs == 1 ou dummy?}
     E -- oui --> F[DummyVecEnv]
-    E -- non --> G[SubprocVecEnv spawn]
+    E -- non --> G[SubprocVecEnv fork]
     F --> H[VecMonitor]
     G --> H
     H --> I{algorithm}
@@ -138,9 +138,9 @@ SB3 v2.3.x `get_device("auto")` retourne `"cpu"` même si MPS est disponible. Ce
 | Condition | Backend | Usage |
 |---|---|---|
 | `n_envs == 1` ou `--vec-env dummy` | `DummyVecEnv` | Single-process, debug, Windows |
-| `n_envs > 1` et `--vec-env subproc` (défaut) | `SubprocVecEnv(start_method="spawn")` | Parallèle, production |
+| `n_envs > 1` et `--vec-env subproc` (défaut) | `SubprocVecEnv(start_method="fork")` | Parallèle, production (Linux/WSL2) |
 
-`spawn` est safe sur macOS (évite le fork avec MPS) et sur Windows (seul mode supporté). Chaque worker est une fonction module-level (`_worker_env_init`) pour être picklable par `spawn`.
+`fork` est le mode natif Linux/WSL2 : plus rapide que `spawn` (pas de re-import), pas de contrainte de picklabilité. Sur macOS avec MPS, il faudrait revenir à `spawn`.
 
 ## 6) Gestion de compatibilité robosuite / robocasa
 

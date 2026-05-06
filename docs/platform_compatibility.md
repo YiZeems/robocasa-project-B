@@ -6,7 +6,7 @@
 |---|---|---|---|
 | Training (SAC/PPO) | ✅ MPS or CPU | ✅ CUDA | ✅ CUDA |
 | Device auto-detection | ✅ `resolve_device("auto")` → mps | ✅ → cuda | ✅ → cuda |
-| Parallel workers (`SubprocVecEnv`) | ✅ spawn | ✅ spawn | ✅ spawn |
+| Parallel workers (`SubprocVecEnv`) | ✅ spawn | ✅ fork | ✅ fork |
 | MuJoCo rendering | ✅ `MUJOCO_GL=cgl` | ⚠️ `MUJOCO_GL=wgl` (see note) | ✅ `MUJOCO_GL=egl` |
 | Video export (MP4) | ✅ imageio-ffmpeg | ✅ imageio-ffmpeg | ✅ imageio-ffmpeg |
 | MLflow UI | ✅ | ✅ | ✅ |
@@ -43,7 +43,7 @@ Device resolution: `resolve_device("auto")` checks `torch.backends.mps.is_availa
 
 - `MUJOCO_GL` is auto-set to `cgl` (CoreGL) by `factory.py` at import time.
 - To use CPU instead of MPS: `--device cpu` is not yet a CLI flag, but you can set `device: cpu` in your YAML or `export PYTORCH_ENABLE_MPS_FALLBACK=1` for unsupported ops.
-- 12 parallel workers (`n_envs: 12`) work on Apple Silicon via `SubprocVecEnv(start_method="spawn")`.
+- 12 parallel workers (`n_envs: 12`) work on Apple Silicon via `SubprocVecEnv(start_method="spawn")` (macOS does not support fork with MPS — if targeting macOS, revert to spawn).
 
 ---
 
@@ -70,7 +70,7 @@ uv sync --extra cuda
 uv run robocasa-telecom-train --config configs/train/open_single_door_sac.yaml
 ```
 
-### Debug (single process, no spawn)
+### Debug (single process)
 
 ```powershell
 uv run robocasa-telecom-train `
@@ -86,7 +86,7 @@ uv run robocasa-telecom-train `
   uv run robocasa-telecom-train ...
   ```
 - **Dependency policy**: the committed `uv.lock` is cross-platform. Use plain `uv sync` for CPU setups, and `uv sync --extra cuda` on Windows/Linux NVIDIA machines.
-- **SubprocVecEnv on Windows**: `start_method="spawn"` is the Windows default and works correctly. If you encounter `PicklingError`, use `--vec-env dummy` to debug.
+- **SubprocVecEnv on WSL2/Linux**: uses `start_method="fork"` (Linux default, fast). If you encounter issues, use `--vec-env dummy` to debug.
 - **MLflow UI**:
   ```powershell
   uv run mlflow ui --backend-store-uri (Resolve-Path mlruns).Path

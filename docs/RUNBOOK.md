@@ -61,7 +61,7 @@ uv run python -m robocasa_telecom.train \
   --vec-env dummy \
   --no-auto-resume
 
-# Mode parallèle (SubprocVecEnv, spawn — défaut Linux/macOS)
+# Mode parallèle (SubprocVecEnv, fork — Linux/WSL2)
 uv run python -m robocasa_telecom.train \
   --config configs/train/open_single_door_sac_debug.yaml \
   --seed 0 \
@@ -98,7 +98,7 @@ Sans `--resume-from`, l'entraînement active `--auto-resume` par défaut et repr
 | Flag | Valeurs | Effet |
 |---|---|---|
 | `--n-envs N` | entier pair ≥ 2 | override le nombre de workers parallèles |
-| `--vec-env` | `subproc` (défaut) / `dummy` | backend VecEnv ; `dummy` = single-process (debug Windows) |
+| `--vec-env` | `subproc` (défaut) / `dummy` | backend VecEnv ; `dummy` = single-process (debug) |
 | `--total-timesteps N` | entier | override la durée de l'entraînement |
 | `--algorithm` | `SAC` / `PPO` | override l'algo déclaré dans le YAML |
 | `--seed N` | entier | override le seed |
