@@ -6,7 +6,7 @@
 
 | Composant | Version | Notes |
 |---|---|---|
-| OS | macOS 15.x (Apple Silicon M-series) | Aussi testé Ubuntu 22.04 |
+| OS | macOS 15.x (Apple Silicon M-series) | Aussi compatible Ubuntu 22.04, Windows 11 |
 | Python | 3.11 | Fixé dans `pyproject.toml` |
 | MuJoCo | 3.x (via robosuite) | Installé automatiquement |
 | Stable-Baselines3 | 2.3.2 | Fixé dans `pyproject.toml` |
@@ -14,6 +14,7 @@
 | RoboCasa | 1.0.0 | Commit figé dans `setup_uv.sh` |
 | RoboSuite | 1.5.2 | Commit figé dans `setup_uv.sh` |
 | MLflow | 2.20.3 | Fixé dans `pyproject.toml` |
+| imageio-ffmpeg | ≥ 0.5 | MP4 sans ffmpeg système (Windows/macOS) |
 | uv | ≥ 0.4 | Gestionnaire de paquets |
 
 ---
@@ -48,6 +49,7 @@ Ce script :
 ### Étape 3 — Vérification
 
 ```bash
+pytest tests/test_platform_smoke.py -v   # 11 tests cross-plateforme, < 5 s, sans GPU
 make check    # compile + vérification des imports
 make sanity   # smoke test 20 steps reset/step
 ```
@@ -212,24 +214,29 @@ Pour SAC, le replay buffer est sauvegardé avec chaque checkpoint périodique (`
 
 ## 9. Limitations liées au matériel
 
+Le device est résolu automatiquement par `utils/device.resolve_device("auto")` : `cuda > mps > cpu`. Toutes les configs déclarent `device: auto` — aucune modification YAML nécessaire selon la machine.
+
 ### Apple Silicon (MPS)
 
-- `device: mps` dans les configs SAC — accélère le training ~2× vs CPU pur.
+- `resolve_device("auto")` retourne `"mps"` sur macOS Apple Silicon (SB3 v2.3.x ne le fait pas nativement — le wrapper corrige ce comportement).
 - Vitesse mesurée : ~2 600 steps/min avec 12 workers et `gradient_steps=12`.
 - Le déterminisme parfait n'est pas garanti sur MPS (opérations atomiques GPU).
-- Pour des résultats parfaitement reproductibles sur Mac : `device: cpu` (plus lent mais déterministe).
+- Pour des résultats parfaitement reproductibles : `device: cpu` dans le YAML (plus lent mais déterministe).
+- `MUJOCO_GL` auto-défini à `cgl` par `factory.py`.
 
-### GPU NVIDIA (CUDA)
+### GPU NVIDIA (CUDA) — Linux / WSL2 / Windows
 
-- `device: auto` détecte CUDA automatiquement.
+- `resolve_device("auto")` retourne `"cuda"` si disponible.
 - Vitesse mesurée : ~3 500 steps/min sur RTX 4070.
 - Le déterminisme CUDA peut varier selon la version de cuDNN.
+- `MUJOCO_GL` auto-défini à `egl` (Linux/WSL2) ou `wgl` (Windows).
 
 ### CPU uniquement
 
-- Fonctionne sur toutes les plateformes.
+- Fonctionne sur toutes les plateformes sans GPU.
 - Plus lent (~800–1 200 steps/min).
 - Déterminisme parfait.
+- Forcer avec `device: cpu` dans le YAML ou via `PYTHONHASHSEED=0`.
 
 ### RAM
 
