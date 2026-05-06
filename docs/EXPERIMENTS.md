@@ -106,6 +106,49 @@ CONFIG_PATH=configs/train/open_single_door_sac.yaml,\
 CHECKPOINT_PATH=checkpoints/<run_id>/best_model.zip,\
 SPLIT=test \
        scripts/slurm/eval.sbatch
+
+# Rendu vidéo 4 vues du best checkpoint
+sbatch --export=ALL,\
+CONFIG_PATH=configs/train/open_single_door_sac.yaml,\
+CHECKPOINT_PATH=checkpoints/<run_id>/best_model.zip,\
+SEED=0 \
+       scripts/slurm/render_best_run.sbatch
+```
+
+### Vidéo du meilleur run
+
+Pour produire un MP4 local avec 4 vues centrées sur le bras et la main du
+robot, à partir de `best_model.zip` :
+
+```bash
+uv run python -m robocasa_telecom.render_best_run \
+  --config configs/train/open_single_door_sac.yaml \
+  --checkpoint checkpoints/<run_id> \
+  --seed 0
+```
+
+Pour l’intégrer directement à la fin d’un run de `train`, activer :
+
+```bash
+ROBOCASA_RENDER_BEST_RUN_VIDEO=1
+```
+
+La vidéo sort alors sous `outputs/<run_id>/videos/<run_id>_best_arm_views.mp4`
+avec son JSON voisin. Désactivation explicite :
+
+```bash
+ROBOCASA_RENDER_BEST_RUN_VIDEO=0
+```
+
+Par défaut, le hook empile plusieurs épisodes jusqu'à atteindre au moins
+`12s` de vidéo, avec un plafond de `5` épisodes et `500` pas par épisode.
+Les paramètres sont ajustables via:
+
+```bash
+ROBOCASA_RENDER_BEST_RUN_VIDEO_MIN_SECONDS=12
+ROBOCASA_RENDER_BEST_RUN_VIDEO_MAX_EPISODES=5
+ROBOCASA_RENDER_BEST_RUN_VIDEO_MAX_STEPS=500
+ROBOCASA_RENDER_BEST_RUN_VIDEO_FPS=20
 ```
 
 ## 6. Artefacts produits
@@ -128,6 +171,9 @@ checkpoints/<run_id>/
   <algo>_<step>_steps.json     ← métadonnées de reprise du checkpoint
   final_model.json             ← métadonnées du checkpoint final
 ```
+
+La vidéo locale du meilleur run est écrite sous
+`outputs/<run_id>/videos/<run_id>_best_arm_views.mp4`.
 
 ## 7. Métriques de comparaison (à reporter dans le rapport)
 
@@ -173,3 +219,67 @@ Jeudi 7 mai     : finalisation rapport, figures, conclusion, rendu 23h59
 5. Comparaison best vs final
 6. Limites et perspectives
 ```
+
+---
+
+## 11. Tableau complet des expériences
+
+| Expérience | But | Commande | Timesteps | Workers | Seeds | Métriques principales |
+|---|---|---|---:|---:|---|---|
+| SAC debug | Valider reward shaping + infrastructure | `make train-sac-debug SEED=0` | 300k | 12 | 0 | `approach_frac`, `door_angle_max`, `val_success_rate` |
+| SAC principal | Run de référence principal | `make train-sac SEED=0` | 3M | 12 | 0 | `val_success_rate`, `test_success_rate`, `return_mean` |
+| SAC tuned | Variante hyperparamètres (lr=1e-4) | `make train-sac-tuned SEED=0` | 2M | 12 | 0 | Comparaison vs SAC principal |
+| PPO baseline | Baseline comparative on-policy | `make train-ppo-baseline SEED=0` | 5M | 1 | 0 | `val_success_rate`, `approx_kl`, `clip_fraction` |
+| Eval validation SAC | Métriques sur split validation | `make eval-validation CONFIG=... CHECKPOINT=...` | — | 1 | 10000 | `success_rate`, `door_angle_final` |
+| Eval test SAC | Métriques finales, seeds non vus | `make eval-test CONFIG=... CHECKPOINT=...` | — | 1 | 20000 | `success_rate`, `door_angle_final` |
+| Eval test PPO | Métriques finales PPO, seeds non vus | `make eval-test CONFIG=... CHECKPOINT=...` | — | 1 | 20000 | `success_rate`, `door_angle_final` |
+| Video SAC best | Visualisation qualitative | `make eval-video CONFIG=... CHECKPOINT=...` | — | 1 | 0–19 | score composite, `door_angle_final` |
+| Courbes PNG | Figures pour le rapport | `make plot PLOT_RUNS="outputs/..."` | — | — | — | `success_rate.png`, `summary.png` |
+
+---
+
+## 12. Justification du protocole expérimental
+
+### Pourquoi séparer debug / principal / tuned / PPO ?
+
+Chaque run a un rôle précis dans la démarche expérimentale :
+
+- **SAC debug (300k)** — valide que le reward shaping n'induit pas de hover hacking avant de lancer 19h de calcul. C'est le filet de sécurité.
+- **SAC principal (3M)** — le run de référence. Suffisamment long pour que SAC converge sur cette tâche (basé sur les benchmarks de la littérature sur des tâches de manipulation de difficulté comparable).
+- **SAC tuned (2M)** — teste la sensibilité aux hyperparamètres. Si SAC tuned performe significativement mieux ou moins bien, cela révèle l'importance du tuning pour cet algorithme.
+- **PPO baseline (5M)** — PPO est on-policy et moins sample-efficient : il a besoin de plus de steps pour converger. 5M steps garantit une comparaison équitable en termes de performance finale (pas de steps bruts).
+
+### Pourquoi seeds séparés pour validation et test ?
+
+- `seed=0` : seed d'entraînement. Toutes les configurations initiales générées avec ce seed ont été vues pendant l'entraînement.
+- `seed=10000` : split validation. Jamais utilisé pendant l'entraînement, mais utilisé pour sélectionner `best_model.zip`. Il peut donc y avoir un léger biais de sélection.
+- `seed=20000` : split test. **Jamais utilisé avant la fin du run**. Les métriques sur ce split sont les seules qui prouvent la généralisation réelle.
+
+Ce protocole est analogue au train/val/test split en apprentissage supervisé — un concept central du cours.
+
+### Pourquoi `n_eval_episodes=50` ?
+
+50 épisodes donnent un intervalle de confiance Wilson à 95% de ±7% autour d'un taux de succès de 50%, ce qui est suffisamment précis pour distinguer un agent à 60% d'un agent à 40%. Avec N=10, l'intervalle serait ±16% — trop incertain pour des conclusions valides.
+
+### Pourquoi `early_stopping_patience=20` ?
+
+20 évaluations consécutives sans progrès correspondent à 20 × 25k = 500k steps. Si le succès ne progresse pas sur 500k steps, le modèle a convergé ou est bloqué dans un minimum local — continuer l'entraînement ne ferait qu'augmenter le risque de surentraînement.
+
+### Pourquoi `gradient_steps=12` pour SAC ?
+
+`gradient_steps=12` signifie que SAC effectue 12 mises à jour réseau par step d'environnement. Avec 12 workers, cela représente 12 × 12 = 144 mises à jour réseau par "round" de collecte. Ce ratio élevé maximise l'utilisation du replay buffer (chaque transition est réutilisée ~12 fois) au prix d'un coût GPU plus important. C'est le trade-off sample efficiency vs. wall-clock time, documenté dans les ablations SAC de la littérature.
+
+---
+
+## 13. Anti-hacking monitoring protocol
+
+À surveiller dans MLflow après chaque validation callback (tous les 25k steps) :
+
+| Signal | Seuil d'alerte | Action si dépassé |
+|---|---|---|
+| `val_approach_frac_mean > 0.5` | Hover hacking confirmé | Augmenter `w_stagnation`, réduire `w_approach` |
+| `val_stagnation_steps_mean > 100` | Blocage chronique | Réduire `stagnation_n` ou augmenter `d_prox` |
+| `val_sign_changes_mean > 15` | Oscillation pathologique | Augmenter `w_oscillation` |
+| `val_door_angle_max_mean < 0.2` | Agent bloqué loin | Vérifier reward approche, augmenter `learning_starts` |
+| `val_success_rate` stagne 20 evals | Early stopping déclenché | Analyse du best checkpoint |
+| `train_success - val_success > 20%` | Surentraînement | Reporter best_model, pas final_model |
