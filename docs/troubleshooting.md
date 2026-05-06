@@ -56,6 +56,60 @@ WARNING: mink environments not imported...
 
 ---
 
+## Device et plateforme
+
+### Device inattendu — `cpu` au lieu de `mps` ou `cuda`
+
+**Symptôme :** le training tourne lentement ; `resolved_device` dans MLflow affiche `cpu`.
+
+**Cause :** SB3 v2.3.x `get_device("auto")` retourne toujours `cpu` sur macOS, même avec MPS disponible.
+
+**Solution :** le projet utilise `utils/device.resolve_device()` qui corrige ce comportement. Vérifier que la valeur dans le YAML est bien `device: auto` (et non `device: mps` ou `device: cpu` explicite) :
+
+```bash
+python -c "from robocasa_telecom.utils.device import resolve_device; print(resolve_device('auto'))"
+# Attendu : mps (macOS Apple Silicon), cuda (Linux/Windows GPU), cpu (CPU uniquement)
+```
+
+---
+
+### `MUJOCO_GL` non défini / erreur de rendu au démarrage
+
+**Symptôme :** `mujoco.FatalError: gladLoadGL error` ou rendu vide dès le premier reset.
+
+**Cause :** la variable `MUJOCO_GL` n'est pas adaptée à l'OS.
+
+**Solution :** `factory.py` la définit automatiquement à l'import. Si l'erreur persiste, forcer manuellement :
+
+```bash
+# Linux headless (WSL2, cluster sans display)
+MUJOCO_GL=egl uv run python -m robocasa_telecom.train ...
+
+# macOS
+MUJOCO_GL=cgl uv run python -m robocasa_telecom.train ...
+
+# Windows ou si egl/cgl échoue partout
+MUJOCO_GL=osmesa uv run python -m robocasa_telecom.train ...
+```
+
+---
+
+### `SubprocVecEnv` / erreur pickling sur Windows
+
+**Symptôme :** `PicklingError`, `AttributeError: Can't pickle local object` ou freeze au démarrage des workers.
+
+**Cause :** `spawn` sur Windows requiert que les fonctions passées aux workers soient importables au niveau module (pas de lambdas ni de closures). Le projet utilise `_worker_env_init` défini au niveau module — si l'erreur apparaît, c'est un problème de path ou d'import.
+
+**Solution immédiate :** passer en single-process avec `--vec-env dummy` pour isoler le problème :
+
+```bash
+uv run python -m robocasa_telecom.train \
+  --config configs/train/open_single_door_sac_debug.yaml \
+  --vec-env dummy --total-timesteps 1000
+```
+
+---
+
 ## MLflow
 
 ### MLflow UI ne s'affiche pas / port occupé
@@ -85,9 +139,12 @@ Sur macOS, le port 5000 est souvent occupé par AirPlay Receiver :
 ```bash
 # Vérifier que mlruns existe et contient des données
 ls mlruns/
-# S'assurer d'être dans le bon répertoire
-uv run mlflow ui --backend-store-uri ./mlruns
+# Utiliser le chemin absolu (plus fiable)
+uv run mlflow ui --backend-store-uri $(realpath mlruns)     # Linux/macOS
+uv run mlflow ui --backend-store-uri (Resolve-Path mlruns).Path  # Windows PowerShell
 ```
+
+Le tracking URI est ancré en absolu (`file://`) par le code — si `mlruns/` existe au bon endroit, les runs apparaissent quelle que soit la commande `mlflow ui` utilisée.
 
 ---
 
