@@ -4,7 +4,7 @@ env:
   controller: null
   use_gym_wrapper: false
   horizon: 500
-  control_freq: 10
+  control_freq: 20
 
   reward_shaping: true
   use_object_obs: true
@@ -18,7 +18,7 @@ env:
   camera_height: 128
   camera_width: 128
   obj_registries:
-    - objaverse
+    - lightwheel
 
   ignore_done: false
 
