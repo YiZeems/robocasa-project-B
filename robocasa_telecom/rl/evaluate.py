@@ -124,19 +124,19 @@ def _resolve_seed_for_split(args: argparse.Namespace, cfg: dict[str, Any]) -> in
 def _render_camera_frame(env, camera_name: str) -> np.ndarray:
     """Best-effort camera render across RoboSuite versions."""
 
-    candidates = [
-        {"camera_name": camera_name, "width": 256, "height": 256},
-        {"camera_name": camera_name},
-        {},
-    ]
-    for kwargs in candidates:
+    sim = getattr(getattr(env, "raw_env", None), "sim", None)
+    if sim is not None:
         try:
-            frame = env.raw_env.render(mode="rgb_array", **kwargs)
-        except TypeError:
-            try:
-                frame = env.raw_env.render(**kwargs)
-            except Exception:
-                continue
+            frame = sim.render(height=256, width=256, camera_name=camera_name)
+        except Exception:
+            frame = None
+        if frame is not None:
+            return ensure_uint8_frame(frame)
+
+    candidates = [({}, "render"), ({"camera_name": camera_name}, "render")]
+    for kwargs, _method in candidates:
+        try:
+            frame = env.raw_env.render(**kwargs)
         except Exception:
             continue
         if frame is not None:
@@ -209,9 +209,13 @@ def main() -> None:
     mlflow.log_param("checkpoint", str(Path(args.checkpoint).resolve()))
     mlflow.log_param("deterministic", args.deterministic)
 
-    env = make_env_from_config(env_cfg, seed=seed)
     model = _load_model(
         algorithm, args.checkpoint, device=cfg.get("train", {}).get("device", "auto")
+    )
+    env = make_env_from_config(
+        env_cfg,
+        seed=seed,
+        reference_obs_space=getattr(model, "observation_space", None),
     )
 
     metrics = {

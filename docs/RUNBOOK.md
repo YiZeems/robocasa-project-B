@@ -78,6 +78,25 @@ Sans `--resume-from`, l’entraînement active `--auto-resume` par défaut et
 reprend le dernier run interrompu correspondant au même `task/algo/seed`.
 Utilise `--no-auto-resume` pour forcer un départ depuis zéro.
 
+Pour générer automatiquement une vidéo 4 vues du meilleur checkpoint à la fin
+du `train`, activer:
+
+```bash
+ROBOCASA_RENDER_BEST_RUN_VIDEO=1
+```
+
+La vidéo est alors écrite sous `outputs/<run_id>/videos/` avec un fichier JSON
+de métadonnées adjacent. Pour désactiver le hook, mettre `ROBOCASA_RENDER_BEST_RUN_VIDEO=0`.
+
+Optionnellement, on peut raccourcir le smoke test ou ajuster le rendu via:
+
+```bash
+ROBOCASA_RENDER_BEST_RUN_VIDEO_MAX_STEPS=20
+ROBOCASA_RENDER_BEST_RUN_VIDEO_FPS=20
+ROBOCASA_RENDER_BEST_RUN_VIDEO_MIN_SECONDS=12
+ROBOCASA_RENDER_BEST_RUN_VIDEO_MAX_EPISODES=5
+```
+
 Commandes utiles :
 
 ```bash
@@ -106,6 +125,7 @@ Le wrapper `scripts/run_eval.sh` existe aussi pour les usages rapides, mais
 ```bash
 sbatch scripts/slurm/train_array.sbatch
 sbatch --export=ALL,CHECKPOINT_PATH=checkpoints/<run_id>/final_model.zip scripts/slurm/eval.sbatch
+sbatch --export=ALL,CONFIG_PATH=configs/train/open_single_door_sac.yaml,CHECKPOINT_PATH=checkpoints/<run_id>/best_model.zip,SEED=0 scripts/slurm/render_best_run.sbatch
 ```
 
 ## Dépannage

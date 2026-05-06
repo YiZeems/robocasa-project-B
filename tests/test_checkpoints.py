@@ -7,6 +7,7 @@ from robocasa_telecom.utils.checkpoints import (
     find_latest_resume_candidate,
     resolve_checkpoint_artifact,
     resolve_checkpoint_path,
+    resolve_run_checkpoint_path,
     save_checkpoint_metadata,
 )
 
@@ -20,6 +21,30 @@ def test_resolve_checkpoint_path_picks_latest_step(tmp_path):
     newer.write_bytes(b"newer")
 
     assert resolve_checkpoint_path(run_dir) == newer.resolve()
+
+
+def test_resolve_run_checkpoint_path_prefers_best_model(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "best_model.zip").write_bytes(b"best")
+    (run_dir / "final_model.zip").write_bytes(b"final")
+    (run_dir / "sac_250_steps.zip").write_bytes(b"step")
+
+    assert resolve_run_checkpoint_path(run_dir, preference="best") == (
+        run_dir / "best_model.zip"
+    ).resolve()
+
+
+def test_resolve_run_checkpoint_path_prefers_final_model(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "best_model.zip").write_bytes(b"best")
+    (run_dir / "final_model.zip").write_bytes(b"final")
+    (run_dir / "sac_250_steps.zip").write_bytes(b"step")
+
+    assert resolve_run_checkpoint_path(run_dir, preference="final") == (
+        run_dir / "final_model.zip"
+    ).resolve()
 
 
 def test_checkpoint_sidecars_follow_model_path(tmp_path):
