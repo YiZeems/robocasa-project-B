@@ -6,6 +6,8 @@ instantiation path, with explicit fallbacks for version and wrapper differences.
 
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,18 @@ from typing import Any
 import numpy as np
 
 from .reward import AntiHackingReward, RewardConfig
+
+# MuJoCo offscreen rendering backend: pick a sane default per platform if the
+# user did not set MUJOCO_GL explicitly. Headless Linux (WSL2, Slurm) needs
+# 'egl' or 'osmesa'; macOS uses 'cgl'; Windows uses 'wgl'. Override anytime
+# with `export MUJOCO_GL=osmesa` etc.
+if "MUJOCO_GL" not in os.environ:
+    if sys.platform == "linux":
+        os.environ["MUJOCO_GL"] = "egl"
+    elif sys.platform == "darwin":
+        os.environ["MUJOCO_GL"] = "cgl"
+    elif sys.platform.startswith("win"):
+        os.environ["MUJOCO_GL"] = "wgl"
 
 try:
     import gymnasium as gym

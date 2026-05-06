@@ -15,6 +15,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 
 from ..envs.factory import load_env_config, make_env_from_config
 from ..utils.checkpoints import resolve_run_checkpoint_path
+from ..utils.device import resolve_device
 from ..utils.io import ensure_dir, load_yaml
 from ..utils.success import infer_success
 from ..utils.video import (
@@ -268,7 +269,7 @@ def main() -> None:
         env_cfg,
         args.checkpoint,
         algorithm=algorithm,
-        device=cfg.get("train", {}).get("device", "auto"),
+        device=resolve_device(cfg.get("train", {}).get("device", "auto")),
         seed=int(args.seed),
         output=args.output,
         video_fps=int(args.video_fps),

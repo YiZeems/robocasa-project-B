@@ -20,6 +20,7 @@ from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 
 from ..envs.factory import load_env_config, make_env_from_config
+from ..utils.device import resolve_device
 from ..utils.metrics import (
     DOOR_ANGLE_KEYS,
     action_magnitude,
@@ -194,7 +195,10 @@ def main() -> None:
     algorithm = _resolve_algorithm(cfg, args.algorithm)
     seed = _resolve_seed_for_split(args, cfg)
 
-    # Initialize MLflow for evaluation logging
+    # Anchor MLflow at an absolute file:// URI (works on Windows, any cwd).
+    mlruns_dir = Path(cfg.get("paths", {}).get("mlruns_dir", "mlruns")).resolve()
+    mlruns_dir.mkdir(parents=True, exist_ok=True)
+    mlflow.set_tracking_uri(mlruns_dir.as_uri())
     mlflow.set_experiment(f"RoboCasa-{env_cfg.task}-Eval")
     eval_run_name = (
         f"eval_{algorithm}_{args.split}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -209,9 +213,9 @@ def main() -> None:
     mlflow.log_param("checkpoint", str(Path(args.checkpoint).resolve()))
     mlflow.log_param("deterministic", args.deterministic)
 
-    model = _load_model(
-        algorithm, args.checkpoint, device=cfg.get("train", {}).get("device", "auto")
-    )
+    device = resolve_device(cfg.get("train", {}).get("device", "auto"))
+    mlflow.log_param("resolved_device", device)
+    model = _load_model(algorithm, args.checkpoint, device=device)
     env = make_env_from_config(
         env_cfg,
         seed=seed,

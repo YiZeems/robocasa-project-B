@@ -2510,6 +2510,7 @@ source = { editable = "." }
 dependencies = [
     { name = "gymnasium" },
     { name = "imageio" },
+    { name = "imageio-ffmpeg" },
     { name = "matplotlib" },
     { name = "mlflow" },
     { name = "numpy" },
@@ -2528,6 +2529,7 @@ dependencies = [
 requires-dist = [
     { name = "gymnasium", specifier = "==0.29.1" },
     { name = "imageio", specifier = ">=2.34,<3" },
+    { name = "imageio-ffmpeg", specifier = ">=0.5" },
     { name = "matplotlib", specifier = ">=3.8,<4" },
     { name = "mlflow", specifier = "==2.20.3" },
     { name = "numpy", specifier = "==2.2.5" },

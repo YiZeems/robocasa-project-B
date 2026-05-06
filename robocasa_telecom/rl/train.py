@@ -35,6 +35,7 @@ from ..utils.checkpoints import (
     save_checkpoint_metadata,
 )
 from ..envs.factory import EnvConfig, load_env_config, make_env_from_config
+from ..utils.device import resolve_device
 from ..utils.metrics import prefixed_metrics, summarize_rollout_episodes
 from ..utils.io import ensure_dir, load_yaml
 from .render_best_run import render_best_checkpoint_video
@@ -66,6 +67,20 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override algorithm declared in YAML (PPO or SAC)",
     )
+    def _even_positive_int(value: str) -> int:
+        n = int(value)
+        if n < 1:
+            raise argparse.ArgumentTypeError(f"n-envs must be >= 1, got {n}")
+        if n % 2 != 0:
+            raise argparse.ArgumentTypeError(f"n-envs must be even, got {n}")
+        return n
+
+    parser.add_argument(
+        "--n-envs",
+        type=_even_positive_int,
+        default=None,
+        help="Override number of parallel workers (must be even, e.g. 2, 4, 6, 12)",
+    )
     parser.add_argument(
         "--resume-from",
         default=None,
@@ -95,6 +110,7 @@ class RunContext:
     resume_from: str | None
     resume_artifact: CheckpointArtifact | None
     auto_resume: bool
+    n_envs_override: int | None
 
 
 def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> RunContext:
@@ -157,6 +173,7 @@ def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> RunCo
         resume_from=resume_from,
         resume_artifact=resume_artifact,
         auto_resume=bool(getattr(args, "auto_resume", True)),
+        n_envs_override=getattr(args, "n_envs", None),
     )
 
 
@@ -333,7 +350,7 @@ def _build_ppo(
         tensorboard_log=None,
         policy_kwargs=policy_kwargs or None,
         seed=seed,
-        device=train_cfg.get("device", "auto"),
+        device=resolve_device(train_cfg.get("device", "auto")),
         verbose=0,
     )
 
@@ -372,7 +389,7 @@ def _build_sac(
         tensorboard_log=None,
         policy_kwargs=policy_kwargs or None,
         seed=seed,
-        device=train_cfg.get("device", "auto"),
+        device=resolve_device(train_cfg.get("device", "auto")),
         verbose=0,
     )
 
@@ -781,7 +798,7 @@ def _build_model_for_resume(
 ) -> BaseAlgorithm:
     """Create or resume a model, restoring replay buffer when available."""
 
-    device = ctx.train_cfg.get("device", "auto")
+    device = resolve_device(ctx.train_cfg.get("device", "auto"))
     if resume_artifact is None:
         return _build_model(ctx.algorithm, train_env, ctx.train_cfg, ctx.seed)
 
@@ -886,7 +903,7 @@ def main() -> None:
     run_output_dir = ensure_dir(output_root / ctx.run_id)
     run_checkpoint_dir = ensure_dir(checkpoint_root / ctx.run_id)
 
-    n_envs = int(ctx.train_cfg.get("n_envs", 1))
+    n_envs = int(ctx.n_envs_override if ctx.n_envs_override is not None else ctx.train_cfg.get("n_envs", 1))
 
     # Build a single env first to fix the obs space, then use it as reference
     # for all parallel workers so every worker has the same obs shape.
@@ -910,7 +927,11 @@ def main() -> None:
     final_step: int = 0
     resume_snapshot = _load_resume_validation_snapshot(run_output_dir)
     try:
-        # Initialize MLflow experiment
+        # Anchor MLflow at an absolute file:// URI so 'mlflow ui' works from any cwd
+        # and Windows paths normalize correctly.
+        mlruns_dir = Path(ctx.paths_cfg.get("mlruns_dir", "mlruns")).resolve()
+        mlruns_dir.mkdir(parents=True, exist_ok=True)
+        mlflow.set_tracking_uri(mlruns_dir.as_uri())
         mlflow.set_experiment(f"RoboCasa-{ctx.env_cfg.task}")
         mlflow.start_run(run_name=ctx.run_id)
 
@@ -1171,7 +1192,7 @@ def main() -> None:
                     ctx.env_cfg,
                     run_checkpoint_dir,
                     algorithm=ctx.algorithm,
-                    device=ctx.train_cfg.get("device", "auto"),
+                    device=resolve_device(ctx.train_cfg.get("device", "auto")),
                     seed=ctx.seed,
                     output=best_video_output_path,
                     video_fps=best_run_video_fps,

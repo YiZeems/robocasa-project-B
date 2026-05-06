@@ -31,8 +31,7 @@ train:
   seed: 0
   save_freq_steps: 100000
   eval_episodes: 5
-  device: mps
-
+  device: auto   # resolved to cuda > mps > cpu by utils/device.resolve_device
 eval:
   eval_freq: 25000
   n_eval_episodes: 50
