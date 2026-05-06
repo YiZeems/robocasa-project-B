@@ -6,10 +6,11 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 
 CHECKPOINT_STEP_RE = re.compile(r"^(?P<prefix>.+)_(?P<step>\d+)_steps\.zip$")
+CheckpointSelection = Literal["latest", "best", "final"]
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,14 @@ def checkpoint_sidecars(model_path: Path) -> tuple[Path, Path]:
 def resolve_checkpoint_path(path: str | Path) -> Path:
     """Resolve a checkpoint file or directory to the latest usable checkpoint."""
 
+    return resolve_run_checkpoint_path(path, preference="latest")
+
+
+def resolve_run_checkpoint_path(
+    path: str | Path, *, preference: CheckpointSelection = "latest"
+) -> Path:
+    """Resolve a checkpoint file or directory with an explicit preference."""
+
     candidate = Path(path).expanduser().resolve()
     if candidate.is_file():
         if candidate.suffix == ".json":
@@ -75,6 +84,16 @@ def resolve_checkpoint_path(path: str | Path) -> Path:
         raise FileNotFoundError(f"Checkpoint path does not exist: {candidate}")
 
     if candidate.is_dir():
+        if preference == "best":
+            for fallback in ("best_model.zip", "final_model.zip"):
+                fallback_path = candidate / fallback
+                if fallback_path.exists():
+                    return fallback_path.resolve()
+        elif preference == "final":
+            fallback_path = candidate / "final_model.zip"
+            if fallback_path.exists():
+                return fallback_path.resolve()
+
         checkpoints = list(candidate.glob("*_steps.zip"))
         if not checkpoints:
             for fallback in ("final_model.zip", "best_model.zip"):

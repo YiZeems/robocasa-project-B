@@ -33,6 +33,26 @@ def grid_2x2(frames: list[np.ndarray]) -> np.ndarray:
     return np.concatenate([top, bottom], axis=0)
 
 
+def resolve_arm_video_cameras(env_cfg) -> tuple[str, str, str, str]:
+    """Pick four arm-focused cameras with fallbacks across RoboSuite versions."""
+
+    requested = [
+        ["robot0_eye_in_hand", "eye_in_hand", "robot0_wristcam"],
+        ["robot0_agentview_left", "agentview_left", "robot0_wristcam"],
+        ["robot0_agentview_right", "agentview_right", env_cfg.render_camera],
+        ["robot0_frontview", "frontview", "robot0_agentview_center", "agentview"],
+    ]
+    resolved: list[str] = []
+    for choices in requested:
+        for candidate in choices:
+            if candidate and candidate not in resolved:
+                resolved.append(candidate)
+                break
+    while len(resolved) < 4:
+        resolved.append(env_cfg.render_camera)
+    return tuple(resolved[:4])
+
+
 def save_mp4(frames: list[np.ndarray], path: str | Path, fps: int = 20) -> Path:
     """Write frames to an MP4 file."""
 
@@ -40,4 +60,3 @@ def save_mp4(frames: list[np.ndarray], path: str | Path, fps: int = 20) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     imageio.mimsave(output_path, frames, fps=fps)
     return output_path
-

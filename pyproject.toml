@@ -34,9 +34,9 @@ include = ["robocasa_telecom", "robocasa_telecom.*"]
 [project.scripts]
 robocasa-telecom-train = "robocasa_telecom.train:main"
 robocasa-telecom-evaluate = "robocasa_telecom.evaluate:main"
+robocasa-telecom-render-best-run = "robocasa_telecom.render_best_run:main"
 robocasa-telecom-sanity = "robocasa_telecom.sanity:main"
 
 [tool.uv.sources]
 robocasa = { path = "external/robocasa" }
 robosuite = { path = "external/robosuite" }
-
