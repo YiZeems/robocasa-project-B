@@ -18,6 +18,7 @@
 - [Objectif du projet](#objectif-du-projet)
 - [Tâche et environnement](#tâche-et-environnement)
 - [Méthode RL](#méthode-rl)
+- [Choix méthodologiques](#choix-méthodologiques)
 - [Reward shaping](#reward-shaping)
 - [Métriques](#métriques)
 - [Structure du repo](#structure-du-repo)
@@ -155,6 +156,46 @@ SAC maximise simultanément la récompense cumulée et l'entropie de la politiqu
 | 1 | SAC principal | `open_single_door_sac.yaml` | SAC | 3 M | Référence principale |
 | 2 | SAC tuned | `open_single_door_sac_tuned.yaml` | SAC | 2 M | Variante (lr=1e-4, ent=auto_0.2) |
 | 3 | PPO baseline | `open_single_door_ppo_baseline.yaml` | PPO | 5 M | Baseline comparative |
+
+---
+
+## Choix méthodologiques
+
+Cette section résume *pourquoi* chaque choix technique a été fait, en lien avec le cours IA705. La version complète avec toutes les justifications formelles est dans [docs/project_report.md §17](docs/project_report.md#17-justification-of-methods-and-tools).
+
+### Pourquoi RoboCasa / MuJoCo ?
+
+RoboCasa fournit un cadre simulation réaliste aligné sur le cours : interaction agent–environnement, reward sparse, espace d'action continu, physique des contacts. La simulation permet de collecter des millions d'interactions sans risque matériel — impossible avec un vrai robot dans la durée du projet.
+
+### Pourquoi SAC comme algorithme principal ?
+
+SAC (Haarnoja et al., 2018) est **off-policy** + **maximisation d'entropie**. Ces deux propriétés le rendent adapté à la manipulation continue :
+
+- **Off-policy** : le replay buffer réutilise chaque transition ~12 fois (`gradient_steps=12`), rendant 3M steps équivalents à ~36M updates réseau — critique quand chaque épisode dure 50 s simulées.
+- **Entropie** : l'exploration est intrinsèque, sans calendrier ε-greedy manuel. L'agent découvre naturellement des stratégies de contact variées.
+- **Espace d'action continu** : DQN et Q-learning tabulaire sont inapplicables sur un bras 7-DoF — SAC paramétrise une politique gaussienne directement dans ℝ^7.
+
+### Pourquoi PPO comme baseline ?
+
+PPO (Schulman et al., 2017) est **on-policy** — il n'a pas de replay buffer et recalcule des rollouts frais à chaque update. Plus stable mais moins sample-efficient. Il sert de **baseline comparative** : montrer que SAC converge avec moins de steps justifie son choix comme méthode principale.
+
+### Pourquoi 12 workers parallèles ?
+
+12 workers `SubprocVecEnv` saturent les 12 cœurs CPU disponibles et maximisent la diversité des trajectoires dans le replay buffer SAC. La contrepartie : le rendu vidéo est impossible depuis les workers (contextes OpenGL non partageables entre processus) → génération vidéo post-training via `eval_video.py`.
+
+### Pourquoi le reward shaping ?
+
+La reward sparse native (`R=1` si succès) crée un problème d'exploration extrême : depuis des actions aléatoires, la probabilité d'ouvrir accidentellement une porte est quasi-nulle. Le reward shaping fournit des signaux intermédiaires (approche, progression θ, succès) tout en prévenant le reward hacking via un design anti-hacking (high-watermark, gating, pénalités conditionnelles).
+
+### Pourquoi MLflow ?
+
+Les algorithmes RL sont instables et sensibles aux seeds. MLflow permet de comparer plusieurs runs côte-à-côte, de détecter les dérives de `approach_frac` (hover hacking) en temps réel, et de lier chaque résultat au checkpoint exact et à la config qui l'a produit.
+
+### Pourquoi ne pas utiliser uniquement la reward totale ?
+
+**Goodhart's Law** : quand une mesure devient un objectif, elle cesse d'être une bonne mesure. Un agent peut maximiser le return en restant immobile devant la poignée (`approach_frac → 1`, `success_rate → 0`). La métrique principale reste donc `val_success_rate`, complétée par les métriques anti-hacking.
+
+Documentation complète : [docs/project_report.md](docs/project_report.md) · [docs/issues_and_limitations.md](docs/issues_and_limitations.md) · [docs/model_improvements.md](docs/model_improvements.md)
 
 ---
 
