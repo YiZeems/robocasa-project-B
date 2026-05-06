@@ -10,7 +10,7 @@
 | MuJoCo rendering | ✅ `MUJOCO_GL=cgl` | ⚠️ `MUJOCO_GL=wgl` (see note) | ✅ `MUJOCO_GL=egl` |
 | Video export (MP4) | ✅ imageio-ffmpeg | ✅ imageio-ffmpeg | ✅ imageio-ffmpeg |
 | MLflow UI | ✅ | ✅ | ✅ |
-| `uv sync` | ✅ | ⚠️ needs extra steps (see below) | ✅ |
+| `uv sync` | ✅ | ✅ base install, `--extra cuda` for NVIDIA | ✅ base install, `--extra cuda` for NVIDIA |
 
 ---
 
@@ -61,9 +61,7 @@ Device resolution: `resolve_device("auto")` checks `torch.backends.mps.is_availa
 ```powershell
 git clone --recurse-submodules <repo-url>
 cd robocasa-project-B
-# uv.lock was generated on Linux/macOS — regenerate for Windows:
-uv lock
-uv sync
+uv sync --extra cuda
 ```
 
 ### Train (PowerShell)
@@ -87,6 +85,7 @@ uv run robocasa-telecom-train `
   $env:MUJOCO_GL = "osmesa"
   uv run robocasa-telecom-train ...
   ```
+- **Dependency policy**: the committed `uv.lock` is cross-platform. Use plain `uv sync` for CPU setups, and `uv sync --extra cuda` on Windows/Linux NVIDIA machines.
 - **SubprocVecEnv on Windows**: `start_method="spawn"` is the Windows default and works correctly. If you encounter `PicklingError`, use `--vec-env dummy` to debug.
 - **MLflow UI**:
   ```powershell
@@ -111,7 +110,7 @@ pip install uv
 ```bash
 git clone --recurse-submodules <repo-url>
 cd robocasa-project-B
-uv sync
+uv sync --extra cuda
 ```
 
 ### Train
