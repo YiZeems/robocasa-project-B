@@ -1,4 +1,5 @@
 PYTHON_VERSION ?= 3.11
+UV_EXTRA ?=
 SEED ?= 0
 CONFIG ?= configs/train/open_single_door_ppo.yaml
 CHECKPOINT ?= checkpoints/<run_id>/best_model.zip
@@ -16,7 +17,7 @@ VIDEO_FPS ?= 20
         slurm-train slurm-eval slurm-render-best-run
 
 setup:
-	PYTHON_VERSION=$(PYTHON_VERSION) bash scripts/setup_uv.sh
+	PYTHON_VERSION=$(PYTHON_VERSION) UV_EXTRA=$(UV_EXTRA) bash scripts/setup_uv.sh
 
 sanity:
 	uv run python -m robocasa_telecom.sanity --config configs/env/open_single_door.yaml --steps 20

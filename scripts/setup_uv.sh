@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
+UV_EXTRA="${UV_EXTRA:-}"
 ROBOCASA_COMMIT="${ROBOCASA_COMMIT:-9a3a78680443734786c9784ab661413edb87067b}"
 ROBOSUITE_COMMIT="${ROBOSUITE_COMMIT:-aaa8b9b214ce8e77e82926d677b4d61d55e577ab}"
 RUN_SETUP_MACROS="${RUN_SETUP_MACROS:-1}"
@@ -52,7 +53,12 @@ git -C external/robosuite checkout "${ROBOSUITE_COMMIT}"
 git -C external/robocasa fetch --all --tags --prune
 git -C external/robocasa checkout "${ROBOCASA_COMMIT}"
 
-uv sync --python "${PYTHON_VERSION}"
+UV_SYNC_ARGS=(sync --python "${PYTHON_VERSION}")
+if [ -n "${UV_EXTRA}" ]; then
+  UV_SYNC_ARGS+=(--extra "${UV_EXTRA}")
+  echo "Syncing optional uv extra: ${UV_EXTRA}"
+fi
+uv "${UV_SYNC_ARGS[@]}"
 
 INSTALLED_ROBOCASA_DIR="$(uv run python - <<'PY'
 from importlib.util import find_spec

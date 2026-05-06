@@ -37,7 +37,11 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 export UV_PROJECT_ENVIRONMENT="${SLURM_SUBMIT_DIR:-$PWD}/.venv"
-uv sync --python "${PYTHON_VERSION:-3.11}" >/dev/null
+UV_SYNC_ARGS=(sync --python "${PYTHON_VERSION:-3.11}")
+if [ -n "${UV_EXTRA:-cuda}" ]; then
+  UV_SYNC_ARGS+=(--extra "${UV_EXTRA:-cuda}")
+fi
+uv "${UV_SYNC_ARGS[@]}" >/dev/null
 echo "Config: ${CONFIG_PATH} | Checkpoint: ${CHECKPOINT_PATH} | Split: ${SPLIT}"
 
 uv run python -m robocasa_telecom.evaluate \
