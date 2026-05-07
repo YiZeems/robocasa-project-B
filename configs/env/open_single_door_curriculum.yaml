@@ -1,0 +1,49 @@
+env:
+  task: OpenCabinet
+  robots: PandaOmron
+  controller: null
+  use_gym_wrapper: false
+  horizon: 500
+  control_freq: 20
+
+  reward_shaping: true
+  use_object_obs: true
+  use_camera_obs: false
+
+  has_renderer: false
+  has_offscreen_renderer: false
+  render_camera: robot0_agentview_center
+  camera_names:
+    - robot0_agentview_center
+  camera_height: 128
+  camera_width: 128
+  obj_registries:
+    - lightwheel
+
+  ignore_done: false
+
+  # Curriculum : spawn position moins aléatoire → épisodes plus cohérents
+  # L'agent voit toujours à peu près la même scène → critic apprend plus vite
+  robot_spawn_deviation_pos_x: 0.05   # défaut RoboCasa : 0.15
+  robot_spawn_deviation_pos_y: 0.02   # défaut RoboCasa : 0.05
+
+reward:
+  w_approach: 0.1       # légèrement augmenté pour guider vers la poignée
+  w_progress: 1.0
+  w_success: 5.0
+  w_action_reg: 0.01
+  w_stagnation: 0.02    # réduit : moins punitif en début de curriculum
+  w_wrong_dir: 0.05     # réduit : 0.3 → 0.05, moins punitif avant 1er contact
+  w_oscillation: 0.1    # légèrement réduit
+
+  # CURRICULUM : seuil de succès abaissé à 0.40 (vs 0.90 en normal)
+  # L'agent reçoit le bonus sparse quand la porte est ouverte à 40%.
+  # Une fois que la politique est stable sur 40%, relancer avec le seuil 0.90.
+  theta_success: 0.40
+
+  d_max: 0.6            # légèrement élargi : approche récompensée jusqu'à 0.6m
+  d_prox: 0.12
+  stagnation_n: 50
+  tol_wrong_dir: 0.02
+  oscillation_window: 20
+  oscillation_threshold: 4

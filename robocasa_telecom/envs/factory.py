@@ -64,6 +64,11 @@ class EnvConfig:
     obj_registries: tuple[str, ...] = ("objaverse",)
     use_gym_wrapper: bool = False
     reward_cfg: dict[str, Any] = field(default_factory=dict)
+    # Robot spawn deviation around the anchor position (metres).
+    # Defaults match RoboCasa kitchen.py: x=0.15, y=0.05.
+    # Set to 0.0 for a deterministic spawn (useful for curriculum).
+    robot_spawn_deviation_pos_x: float = 0.15
+    robot_spawn_deviation_pos_y: float = 0.05
 
 
 if gym is not None:
@@ -451,6 +456,8 @@ def load_env_config(path: str | Path) -> EnvConfig:
         obj_registries=obj_registries,
         use_gym_wrapper=bool(env_data.get("use_gym_wrapper", False)),
         reward_cfg=dict(data.get("reward", {})),
+        robot_spawn_deviation_pos_x=float(env_data.get("robot_spawn_deviation_pos_x", 0.15)),
+        robot_spawn_deviation_pos_y=float(env_data.get("robot_spawn_deviation_pos_y", 0.05)),
     )
 
 
@@ -518,6 +525,8 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None, reference_
             camera_widths=env_cfg.camera_width,
             ignore_done=env_cfg.ignore_done,
             obj_registries=env_cfg.obj_registries,
+            robot_spawn_deviation_pos_x=env_cfg.robot_spawn_deviation_pos_x,
+            robot_spawn_deviation_pos_y=env_cfg.robot_spawn_deviation_pos_y,
         )
 
         if env_cfg.use_gym_wrapper:
