@@ -351,7 +351,8 @@ class RewardHackMonitorCallback(BaseCallback):
                     "reward_hack/approach_frac":    float(np.mean(self._ep_approach))    / denom,
                     "reward_hack/progress_frac":    float(np.mean(self._ep_progress))    / denom,
                     "reward_hack/success_frac":     float(np.mean(self._ep_success_r))   / denom,
-                    "reward_hack/oscillation_frac": float(np.mean(self._ep_oscillation)) / denom,
+                    # oscillation is a penalty (negative) — log its absolute contribution
+                    "reward_hack/oscillation_frac": abs(float(np.mean(self._ep_oscillation))) / denom,
                     # Episode-level diagnostics
                     "reward_hack/stagnation_rate":       float(np.mean(self._ep_stagnation_fired)),
                     "reward_hack/theta_best_mean":       float(np.mean(self._ep_theta_best)),

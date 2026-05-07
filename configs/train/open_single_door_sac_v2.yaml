@@ -1,0 +1,76 @@
+project:
+  name: robocasa_telecom
+  task: OpenCabinet
+
+paths:
+  output_root: outputs
+  checkpoint_root: checkpoints
+  tensorboard_root: logs/tensorboard
+
+env:
+  config_path: configs/env/open_single_door.yaml
+
+train:
+  algorithm: SAC
+  policy: MlpPolicy
+  total_timesteps: 3000000
+
+  # --- Learning rate ---
+  # Cosine decay: 3e-4 → 1e-5 progressivement.
+  # Évite un LR trop élevé en fin de run quand le critic commence à diverger.
+  learning_rate: 3.0e-4
+  lr_schedule: cosine
+  lr_min: 1.0e-5
+
+  # --- Replay buffer ---
+  buffer_size: 1000000
+  batch_size: 512
+  # 10k steps avant le premier update (vs 1000 avant).
+  # Donne plus de diversité au replay buffer et évite que le critic
+  # apprenne sur des transitions trop redondantes au démarrage.
+  learning_starts: 10000
+
+  # --- SAC core ---
+  tau: 0.01           # 0.005 → 0.01 : target network suit plus vite le critic,
+                      # réduit l'overestimation et les spikes de la critic loss.
+  gamma: 0.99
+  train_freq: 1
+  # 4 updates gradient par step env (vs 1).
+  # Le critic est mieux entraîné → overestimation réduite → actor loss stable.
+  # Impact vitesse faible car la partie lente est la simulation, pas le GPU.
+  gradient_steps: 4
+  target_update_interval: 1
+
+  # --- Entropie (CORRECTION PRINCIPALE) ---
+  # v1 bug : ent_coef="auto" démarre α=1.0, SAC le crashe à ~0 dès 200k steps
+  # car le target_entropy par défaut = -action_dim = -12 (trop agressif).
+  # Sans entropie, la politique devient déterministe avant d'apprendre,
+  # les actions saturent aux limites, le return descend indéfiniment.
+  #
+  # Fix 1 : démarrer α=0.1 au lieu de 1.0 → décroissance contrôlée.
+  # Fix 2 : target_entropy=-4 au lieu de -12 → SAC vise une entropie
+  #          moins agressive, α reste positif plus longtemps, meilleure exploration.
+  #          Règle empirique pour manipulation : -action_dim/3 à -action_dim/2.
+  ent_coef: "auto_0.1"
+  target_entropy: -4
+
+  # --- Réseau ---
+  # [400, 300] au lieu de [256, 256] : légèrement plus de capacité
+  # pour les 220D d'observation + 12D d'action.
+  net_arch: [400, 300]
+
+  n_envs: 12
+  seed: 0
+  save_freq_steps: 100000
+  eval_episodes: 5
+  device: auto
+
+eval:
+  eval_freq: 100000
+  # 20 épisodes de validation au lieu de 5 → intervalle de confiance
+  # beaucoup plus serré, moins de faux positifs/négatifs sur le best model.
+  n_eval_episodes: 20
+  validation_seed: 10000
+  test_seed: 20000
+  early_stopping_patience: 20
+  deterministic: true

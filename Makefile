@@ -34,11 +34,15 @@ train:
 
 train-sac-debug:
 	uv run python -m robocasa_telecom.train \
-	  --config configs/train/open_single_door_sac_debug.yaml --seed $(SEED)
+	  --config configs/train/open_single_door_sac_debug.yaml --seed $(SEED) $(EXTRA)
 
 train-sac:
 	uv run python -m robocasa_telecom.train \
-	  --config configs/train/open_single_door_sac.yaml --seed $(SEED)
+	  --config configs/train/open_single_door_sac.yaml --seed $(SEED) $(EXTRA)
+
+train-sac-v2:
+	uv run python -m robocasa_telecom.train \
+	  --config configs/train/open_single_door_sac_v2.yaml --seed $(SEED) $(EXTRA)
 
 train-sac-tuned:
 	uv run python -m robocasa_telecom.train \
