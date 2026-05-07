@@ -1,0 +1,26 @@
+{
+  "checkpoint": "checkpoints\\OpenCabinet_ppo_seed0_resume_501k_to_551k_20260505_202414\\final_model.zip",
+  "cameras": [
+    "robot0_frontview"
+  ],
+  "resolution": "512x512",
+  "episodes": [
+    {
+      "episode": 1,
+      "return": 6.619,
+      "success": false
+    },
+    {
+      "episode": 2,
+      "return": 6.356,
+      "success": false
+    },
+    {
+      "episode": 3,
+      "return": 13.359,
+      "success": false
+    }
+  ],
+  "success_rate": 0.0,
+  "return_mean": 8.778
+}

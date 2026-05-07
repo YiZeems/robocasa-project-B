@@ -2,7 +2,7 @@ env:
   task: OpenCabinet
   robots: PandaOmron
   controller: null
-  use_gym_wrapper: true
+  use_gym_wrapper: false
   horizon: 400
   control_freq: 20
 
@@ -12,9 +12,9 @@ env:
 
   has_renderer: false
   has_offscreen_renderer: false
-  render_camera: robot0_agentview_center
+  render_camera: robot0_frontview
   camera_names:
-    - robot0_agentview_center
+    - robot0_frontview
   camera_height: 128
   camera_width: 128
   obj_registries:

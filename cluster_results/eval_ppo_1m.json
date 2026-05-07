@@ -1,0 +1,32 @@
+{
+  "checkpoint": "checkpoints/OpenCabinet_ppo_seed0_resume_501k_to_1001k_20260503_185022/final_model.zip",
+  "episodes": [
+    {
+      "episode": 1,
+      "return": 29.492,
+      "success": false
+    },
+    {
+      "episode": 2,
+      "return": 36.988,
+      "success": false
+    },
+    {
+      "episode": 3,
+      "return": 17.527,
+      "success": false
+    },
+    {
+      "episode": 4,
+      "return": 44.807,
+      "success": false
+    },
+    {
+      "episode": 5,
+      "return": 7.165,
+      "success": false
+    }
+  ],
+  "success_rate": 0.0,
+  "return_mean": 27.195800000000002
+}

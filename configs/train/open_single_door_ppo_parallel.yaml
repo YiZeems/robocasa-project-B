@@ -1,0 +1,44 @@
+project:
+  name: robocasa_telecom
+  task: OpenCabinet
+
+paths:
+  output_root: outputs
+  checkpoint_root: checkpoints
+  tensorboard_root: logs/tensorboard
+
+env:
+  config_path: configs/env/open_single_door.yaml
+
+train:
+  algorithm: PPO
+  policy: MlpPolicy
+  device: auto          # "auto" = CUDA si disponible, CPU sinon. Mettre "cuda" pour forcer.
+
+  # --- Parallelism ---
+  # Windows stability: avoid n_envs > 8 with RoboCasa/MuJoCo — parallel scene init
+  # can exhaust memory and kill workers (BrokenPipeError / EOFError). Use
+  # configs/train/open_single_door_ppo_parallel_6env.yaml for a safer fallback.
+  n_envs: 8
+  vec_env_cls: subproc  # SubprocVecEnv: 1 subprocess per env, true parallelism
+
+  # --- Steps / budget ---
+  # n_steps is PER ENV per rollout.
+  # Total transitions per PPO update = n_steps * n_envs = 256 * 8 = 2048
+  total_timesteps: 1000000
+  n_steps: 256          # per env; 256 × 8 envs = 2048 total per rollout
+
+  # --- PPO hyperparams ---
+  batch_size: 512       # must divide n_steps * n_envs = 2048 evenly → 4 minibatches
+  n_epochs: 4           # fewer passes per rollout (more diverse data compensates)
+  learning_rate: 0.0003
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01        # small entropy bonus to keep exploration alive
+  vf_coef: 0.5
+  clip_range: 0.2
+
+  # --- Logging / checkpoints ---
+  seed: 0
+  save_freq_steps: 50000
+  eval_episodes: 20

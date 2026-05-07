@@ -45,6 +45,11 @@ class EnvConfig:
     ignore_done: bool = False
     obj_registries: tuple[str, ...] = ("objaverse",)
     use_gym_wrapper: bool = False
+    # Set by _make_envs before SubprocVecEnv to lock obs shape across all workers.
+    # Different kitchen layouts may expose different obs keys; without locking,
+    # SubprocVecEnv's np.stack() fails when worker obs shapes diverge.
+    obs_keys: tuple[str, ...] | None = None
+    obs_shapes: dict[str, tuple[int, ...]] | None = None
 
 
 if gym is not None:
@@ -120,6 +125,70 @@ class GymnasiumAdapter(_GymEnvBase):
         self._env.close()
 
 
+class ObsAugmentWrapper(_GymEnvBase):
+    """Appends [door_open_amount, eef_to_handle_x/y/z] to the flattened obs.
+
+    Wraps a RawRoboCasaAdapter and reads live fixture state from the cached
+    values that RewardShapingWrapper stores after each step.  This gives the
+    policy direct access to task-relevant state without any extra sim queries.
+
+    The 4 appended values sit at obs[-4:]:
+        obs[-4]    door_open_amount  – mean normalized joint angle in [0, 1]
+        obs[-3:]   eef_to_handle     – (handle_pos - eef_pos) in robot frame [m]
+    """
+
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
+
+    def __init__(self, env: Any):
+        if spaces is None:
+            raise ModuleNotFoundError("gymnasium required")
+        super().__init__()
+        self._env = env
+        self.action_space = env.action_space
+        old_shape = env.observation_space.shape
+        n = old_shape[0] + 4
+        self.observation_space = spaces.Box(
+            low=np.full(n, -np.inf, dtype=np.float32),
+            high=np.full(n, np.inf, dtype=np.float32),
+            dtype=np.float32,
+        )
+
+    def _augment(self, flat_obs: np.ndarray) -> np.ndarray:
+        open_amt = 0.0
+        eef_to_handle = np.zeros(3, dtype=np.float32)
+        try:
+            shaped_env = self._env.raw_env  # RewardShapingWrapper
+            open_amt = getattr(shaped_env, "_last_open", 0.0)
+            handle_pos = getattr(shaped_env, "_last_handle_pos", None)
+            eef_pos = getattr(shaped_env, "_last_eef_pos", None)
+            if handle_pos is not None and eef_pos is not None:
+                eef_to_handle = (handle_pos - eef_pos).astype(np.float32)
+        except Exception:
+            pass
+        extra = np.array([open_amt, *eef_to_handle], dtype=np.float32)
+        return np.concatenate([flat_obs, extra])
+
+    def reset(self, *, seed: int | None = None, options: dict | None = None):
+        out = self._env.reset(seed=seed, options=options)
+        if isinstance(out, tuple):
+            obs, info = out
+            return self._augment(obs), info
+        return self._augment(out), {}
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self._env.step(action)
+        return self._augment(obs), reward, terminated, truncated, info
+
+    def render(self):
+        return self._env.render()
+
+    def close(self):
+        self._env.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._env, name)
+
+
 class RawRoboCasaAdapter(_GymEnvBase):
     """Adapter around raw RoboCasa env with observation flattening for SB3.
 
@@ -130,7 +199,13 @@ class RawRoboCasaAdapter(_GymEnvBase):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
-    def __init__(self, raw_env: Any, horizon: int):
+    def __init__(
+        self,
+        raw_env: Any,
+        horizon: int,
+        canonical_obs_keys: tuple[str, ...] | None = None,
+        canonical_obs_shapes: dict[str, tuple[int, ...]] | None = None,
+    ):
         if spaces is None or space_utils is None:
             raise ModuleNotFoundError(
                 "gymnasium is required to build RoboCasa adapters. "
@@ -153,7 +228,21 @@ class RawRoboCasaAdapter(_GymEnvBase):
             dtype=np.float32,
         )
 
-        self._obs_keys, self._dict_space = self._build_dict_space(first_obs)
+        if canonical_obs_keys is not None and canonical_obs_shapes is not None:
+            # Use the probe env's canonical keys/shapes so all SubprocVecEnv
+            # workers produce identically-shaped obs regardless of kitchen layout.
+            self._obs_keys = canonical_obs_keys
+            self._dict_space = spaces.Dict({
+                key: spaces.Box(
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=canonical_obs_shapes[key],
+                    dtype=np.float32,
+                )
+                for key in canonical_obs_keys
+            })
+        else:
+            self._obs_keys, self._dict_space = self._build_dict_space(first_obs)
         self.observation_space = space_utils.flatten_space(self._dict_space)
 
     @staticmethod
@@ -194,16 +283,27 @@ class RawRoboCasaAdapter(_GymEnvBase):
         return ordered_keys, dict_space
 
     def _flatten_obs(self, obs: Any) -> np.ndarray:
-        """Flatten observations while keeping a fixed key order across resets/episodes."""
+        """Flatten observations while keeping a fixed key order across resets/episodes.
 
+        Each key's value is forced to the canonical shape so that different kitchen
+        layouts (which may vary key presence or even value size for the same key)
+        always produce an identically-sized flat vector — required for SubprocVecEnv.
+        """
         selected = self._select_obs(obs)
-        aligned = {
-            key: np.asarray(
-                selected.get(key, np.zeros(self._dict_space[key].shape)),
-                dtype=np.float32,
-            )
-            for key in self._obs_keys
-        }
+        aligned = {}
+        for key in self._obs_keys:
+            canonical_shape = self._dict_space[key].shape
+            canonical_size = int(np.prod(canonical_shape))
+            raw = selected.get(key)
+            if raw is not None:
+                arr = np.asarray(raw, dtype=np.float32).flatten()
+                if len(arr) != canonical_size:
+                    buf = np.zeros(canonical_size, dtype=np.float32)
+                    buf[: min(len(arr), canonical_size)] = arr[: min(len(arr), canonical_size)]
+                    arr = buf
+                aligned[key] = arr.reshape(canonical_shape)
+            else:
+                aligned[key] = np.zeros(canonical_shape, dtype=np.float32)
         flat = space_utils.flatten(self._dict_space, aligned)
         return np.asarray(flat, dtype=np.float32)
 
@@ -366,15 +466,27 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
                 # Initialize once before wrapping so robot metadata is populated.
                 shaped_env.reset()
                 gym_env = GymWrapper(shaped_env, keys=None)
-                env = GymnasiumAdapter(
+                adapter = GymnasiumAdapter(
                     gym_env=gym_env,
                     raw_env=raw_env,
                     horizon=env_cfg.horizon,
                 )
             except Exception:
-                env = RawRoboCasaAdapter(raw_env=shaped_env, horizon=env_cfg.horizon)
+                adapter = RawRoboCasaAdapter(
+                    raw_env=shaped_env,
+                    horizon=env_cfg.horizon,
+                    canonical_obs_keys=env_cfg.obs_keys,
+                    canonical_obs_shapes=env_cfg.obs_shapes,
+                )
         else:
-            env = RawRoboCasaAdapter(raw_env=shaped_env, horizon=env_cfg.horizon)
+            adapter = RawRoboCasaAdapter(
+                raw_env=shaped_env,
+                horizon=env_cfg.horizon,
+                canonical_obs_keys=env_cfg.obs_keys,
+                canonical_obs_shapes=env_cfg.obs_shapes,
+            )
+
+        env = ObsAugmentWrapper(adapter)
     except FileNotFoundError as exc:
         raise RuntimeError(
             "RoboCasa assets are missing. Run setup with DOWNLOAD_ASSETS=1 "

@@ -16,7 +16,17 @@ checkpoints/
 # External dependencies
 external/
 
+# Colleague's repo (separate git repo — not a submodule)
+robocasa_yimou/
+
+# Large media files
+*.mp4
+
+# Stray files
+0%
+
 # OS
 .DS_Store
 
 *.egg-info/
+.claude
