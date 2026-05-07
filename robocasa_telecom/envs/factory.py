@@ -432,11 +432,15 @@ class GoalConditionedWrapper(_GymEnvBase):
         return self._goal_obs(obs), info
 
     def step(self, action):
-        flat_obs, _shaped_reward, terminated, truncated, info = self._base.step(action)
+        flat_obs, shaped_reward, terminated, truncated, info = self._base.step(action)
         self._current_theta = self._base._extract_theta()
         achieved = np.array([self._current_theta], dtype=np.float32)
         desired = np.array([self._theta_success], dtype=np.float32)
-        reward = float(self.compute_reward(achieved, desired, info))
+        # Hybrid reward: dense shaping guides exploration, sparse HER signal for goal.
+        # compute_reward (sparse only) is called by HerReplayBuffer for virtual
+        # transitions — those don't receive the shaped component.
+        sparse = float(self.compute_reward(achieved, desired, info))
+        reward = shaped_reward + sparse
         return self._goal_obs(flat_obs), reward, terminated, truncated, info
 
     def render(self):
