@@ -48,6 +48,10 @@ train-sac-v3:
 	uv run python -m robocasa_telecom.train \
 	  --config configs/train/open_single_door_sac_v3.yaml --seed $(SEED) --no-auto-resume $(EXTRA)
 
+train-sac-v3-curriculum:
+	uv run python -m robocasa_telecom.train \
+	  --config configs/train/open_single_door_sac_v3_curriculum.yaml --seed $(SEED) --no-auto-resume $(EXTRA)
+
 train-sac-tuned:
 	uv run python -m robocasa_telecom.train \
 	  --config configs/train/open_single_door_sac_tuned.yaml --seed $(SEED) --no-auto-resume
