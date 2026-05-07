@@ -69,6 +69,8 @@ class EnvConfig:
     # Set to 0.0 for a deterministic spawn (useful for curriculum).
     robot_spawn_deviation_pos_x: float = 0.15
     robot_spawn_deviation_pos_y: float = 0.05
+    # Wrap with GoalConditionedWrapper for HER training.
+    use_her: bool = False
 
 
 if gym is not None:
@@ -368,6 +370,86 @@ class RawRoboCasaAdapter(_GymEnvBase):
         self.raw_env.close()
 
 
+class GoalConditionedWrapper(_GymEnvBase):
+    """Wraps RawRoboCasaAdapter with a GoalEnv interface for HER (SB3).
+
+    achieved_goal = [theta]  (current door angle in radians)
+    desired_goal  = [theta_success]  (target angle from reward config)
+
+    compute_reward is used both during actual rollout AND by HerReplayBuffer
+    to relabel transitions with virtual goals (future strategy).
+    The base env shaped reward is replaced by sparse goal-conditioned reward.
+    The info dict from the base step is preserved so RewardHackMonitorCallback
+    can still read theta_best and episode_reward_components.
+    """
+
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
+
+    def __init__(self, base_env: "RawRoboCasaAdapter", theta_success: float = 0.40):
+        if spaces is None:
+            raise ModuleNotFoundError("gymnasium is required for GoalConditionedWrapper")
+        super().__init__()
+        self._base = base_env
+        self._theta_success = float(theta_success)
+        self._current_theta: float = 0.0
+
+        self.action_space = base_env.action_space
+        self.observation_space = spaces.Dict({
+            "observation": base_env.observation_space,
+            "achieved_goal": spaces.Box(
+                low=np.array([-0.1], dtype=np.float32),
+                high=np.array([3.2], dtype=np.float32),
+                dtype=np.float32,
+            ),
+            "desired_goal": spaces.Box(
+                low=np.array([-0.1], dtype=np.float32),
+                high=np.array([3.2], dtype=np.float32),
+                dtype=np.float32,
+            ),
+        })
+
+    # HerReplayBuffer calls this to relabel virtual transitions.
+    def compute_reward(
+        self,
+        achieved_goal: np.ndarray,
+        desired_goal: np.ndarray,
+        info: Any,
+    ) -> np.ndarray:
+        achieved = np.asarray(achieved_goal, dtype=np.float32)
+        desired = np.asarray(desired_goal, dtype=np.float32)
+        return (achieved[..., 0] >= desired[..., 0]).astype(np.float32) - 1.0
+
+    def _goal_obs(self, flat_obs: np.ndarray) -> dict:
+        return {
+            "observation": flat_obs,
+            "achieved_goal": np.array([self._current_theta], dtype=np.float32),
+            "desired_goal": np.array([self._theta_success], dtype=np.float32),
+        }
+
+    def reset(self, *, seed: int | None = None, options: dict | None = None):
+        obs, info = self._base.reset(seed=seed, options=options)
+        self._current_theta = self._base._extract_theta()
+        return self._goal_obs(obs), info
+
+    def step(self, action):
+        flat_obs, _shaped_reward, terminated, truncated, info = self._base.step(action)
+        self._current_theta = self._base._extract_theta()
+        achieved = np.array([self._current_theta], dtype=np.float32)
+        desired = np.array([self._theta_success], dtype=np.float32)
+        reward = float(self.compute_reward(achieved, desired, info))
+        return self._goal_obs(flat_obs), reward, terminated, truncated, info
+
+    def render(self):
+        return self._base.render()
+
+    def close(self):
+        self._base.close()
+
+    @property
+    def raw_env(self):
+        return self._base.raw_env
+
+
 def _obs_shape_matches_space(env: Any, obs: Any) -> bool:
     """Return whether an observation shape matches the declared observation space."""
 
@@ -458,6 +540,7 @@ def load_env_config(path: str | Path) -> EnvConfig:
         reward_cfg=dict(data.get("reward", {})),
         robot_spawn_deviation_pos_x=float(env_data.get("robot_spawn_deviation_pos_x", 0.15)),
         robot_spawn_deviation_pos_y=float(env_data.get("robot_spawn_deviation_pos_y", 0.05)),
+        use_her=bool(env_data.get("use_her", False)),
     )
 
 
@@ -561,6 +644,10 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None, reference_
             "RoboCasa assets are missing. Run setup with DOWNLOAD_ASSETS=1 "
             "or execute: python -m robocasa.scripts.download_kitchen_assets --type all"
         ) from exc
+
+    if env_cfg.use_her:
+        theta_success = float(env_cfg.reward_cfg.get("theta_success", 0.40))
+        env = GoalConditionedWrapper(env, theta_success=theta_success)
 
     if seed is not None:
         env.reset(seed=seed)
