@@ -11,13 +11,17 @@
 | # | Catégorie | Problème | Symptôme | Cause | Solution / mitigation | Statut |
 |---|---|---|---|---|---|---|
 | 1.1 | Exploration / SAC | `ent_coef` auto-tuning crash (v1 et v2) | `actor_loss` remonte vers 0, actions saturent aux limites, `return_mean` descend de −15 à −35 | `log_prob ≈ −20` toujours < `target_entropy` → SAC pousse `α` vers 0 systématiquement | `ent_coef=0.1` fixe (v3) — suppression de l'auto-tuning | Résolu (v3) |
-| 1.2 | Stabilité critic | Critic loss spikes (> 40 000) à partir de 500k steps | Divergence `critic_loss`, `actor_loss` instable | `α ≈ 0` → absence de régularisation entropique → Q-values divergent | `gradient_steps=4`, `tau=0.01` | Résolu (v2/v3) |
+| 1.2 | Stabilité critic | Critic loss spikes (> 40 000 en v2, > 37 en v3) | Divergence `critic_loss`, `actor_loss` instable | `α ≈ 0` → absence de régularisation entropique → Q-values divergent | `gradient_steps=4`, `tau=0.01` | Résolu (v2/v3) |
 | 1.3 | Reward hacking | Hover hacking (approche sans ouverture) | `approach_frac > 0.7`, `val_success_rate = 0%`, return ≈ 200–400 | Reward d'approche dense exploitable sans condition de progression | High-watermark progress + gating approche + pénalité stagnation + dominance succès | Résolu |
 | 1.4 | Auto-resume | Auto-resume reprend le mauvais checkpoint (v1/v2/v3) | Run v3 reprend le checkpoint cassé de v1 ou v2 | `task + algo + seed` identiques entre versions → `auto_resume` sélectionne le dernier run compatible | `--no-auto-resume` dans tous les targets Makefile | Résolu |
 | 1.5 | Auto-resume | Boucle infinie de reprise après crash | Crash loop sur un run qui a écrit `final_model.zip` mais pas `train_summary.json` | `_run_is_complete()` vérifie uniquement `train_summary.json` | Fallback sur `final_model.json` + comparaison `num_timesteps >= target` | Résolu |
 | 1.6 | Performance | Validation = 82 % du wall time (v1) | Temps d'entraînement ~8× plus long qu'attendu | `n_eval_episodes=50` × `eval_freq=25000` = 23 min par validation | `n_eval_episodes=5→10`, `eval_freq=100000` | Résolu (v2/v3) |
 | 1.7 | Performance | Reset 9.3 s par épisode | Workers lents, faible throughput | `obj_registries=[objaverse]` charge des assets lourds | `obj_registries=[lightwheel]` → reset ~4.8 s | Résolu |
 | 1.8 | Performance | `control_freq` mal configuré | Simulation 2× plus lente que nécessaire | `control_freq=10` (50 substeps MuJoCo) au lieu de 20 (25 substeps) | `control_freq=20` | Résolu |
+| 1.17 | Apprentissage | Cold start — aucun contact avec la poignée (v3) | `theta_best_mean` ≈ 0.002–0.003 rad à 400k steps, porte quasi immobile | Pas de premier signal positif → replay buffer vide de succès → critic ne valorise pas l'ouverture | Curriculum learning : `theta_success=0.40`, spawn déviation réduite (v3_curriculum) | Partiellement résolu |
+| 1.18 | Apprentissage | Pic transitoire sans apprentissage stable (v3_curriculum) | `val_door_angle_final` atteint 0.021 rad à 300k puis redescend à 0.015–0.017 à 500k | Buffer toujours sans succès confirmés (`success_frac=0`) → critic diverge (loss 0→6+) → régression | HER : relabellisation rétroactive des goals → succès virtuels créés à chaque épisode | En cours (HER) |
+| 1.19 | Apprentissage | Replay buffer sans signal positif | `success_frac=0` sur toutes les runs → critic ne peut pas apprendre à valoriser l'ouverture | Récompense sparse jamais déclenchée même avec `theta_success=0.40` sur 500k steps | HER avec `n_sampled_goal=4`, `strategy=future`, `theta_success=0.15` | En cours (HER) |
+| 1.20 | Infrastructure | HER : `reference_obs_space` Dict transmis à `RawRoboCasaAdapter` | `TypeError: int() argument must be a string…NoneType` au démarrage | `GoalConditionedWrapper.observation_space` est Dict (sans `.shape`) ; les workers recevaient le Dict au lieu du Box interne | Extraction du flat Box space via `getattr(_ref_env, '_base', None)` avant passage aux workers | Résolu |
 | 1.9 | Infrastructure | `SubprocVecEnv` crash `ConnectionResetError` au démarrage | Workers meurent immédiatement | `fork` : MuJoCo hérite des FD/EGL du process parent → contexte corrompu | Utiliser `spawn` (défaut SB3) | Résolu |
 | 1.10 | Infrastructure | OOM WSL2 (même symptôme `ConnectionResetError`) | Workers crashent aléatoirement pendant l'entraînement | 12 workers × 3.4 GB = ~41 GB > RAM WSL2 par défaut (31 GB) | `.wslconfig memory=56GB` | Résolu |
 | 1.11 | Infrastructure | Vidéo impossible pendant l'entraînement | Crash EGL/OpenGL dans les workers | `SubprocVecEnv` : contextes OpenGL non partagés entre processus | Two-pass `eval_video.py` : scoring sans rendu + reproduction avec seed identique | Résolu |
@@ -102,6 +106,122 @@ métrique primaire, jamais le `return_mean` seul.
 
 ---
 
+### 1.17 Cold Start — Aucun Contact avec la Poignée (v3)
+
+**Description :** Même avec `ent_coef=0.1` fixe et SDE, v3 n'a jamais établi de
+contact utile avec la poignée après 400k steps. La métrique `theta_best_mean` en
+training oscillait entre 0.0017 et 0.0027 rad — soit environ 0.15 degrés d'ouverture,
+probablement des vibrations mécaniques et non un vrai tirage.
+
+**Métriques observées (v3 @ 400k) :**
+- `train/actor_loss` : stable à −47 → −53 (bon signe, pas de crash)
+- `train/ent_coef` : plat à 0.1 (fix confirmé)
+- `train/critic_loss` : max 37.7 (contenu mais croissant)
+- `val_door_angle_final_mean` : 0.0037 rad (meilleur checkpoint, 400k)
+- `val_success_rate` : 0% à tout checkpoint
+
+**Cause :** La tâche requiert un contact précis avec une poignée de ~5 cm. Pendant
+l'exploration SDE, le bras bouge de façon cohérente mais aléatoire. La probabilité
+d'un contact productif sur 500 steps est structurellement faible. Sans ce premier
+signal de progression, le replay buffer ne contient que des transitions à reward
+négative ou nulle → le critic ne peut pas apprendre que l'ouverture de la porte est
+désirable → l'actor ne cherche pas à ouvrir.
+
+**Fix appliqué (v3_curriculum) :** Réduire le seuil de succès à `theta_success=0.40`
+(40% d'ouverture vs 90%) et réduire la variance de spawn du robot (`pos_x: 0.05`,
+`pos_y: 0.02`) pour que l'agent voie des scènes similaires et que le critic
+converge plus vite.
+
+**Lien cours :** Exploration et crédit à long terme (credit assignment). Sans
+signal de récompense positive, les méthodes off-policy comme SAC ne peuvent pas
+apprendre même avec un replay buffer plein.
+
+---
+
+### 1.18 Pic Transitoire sans Convergence (v3_curriculum)
+
+**Description :** v3_curriculum a montré un signal positif fort à 300k steps
+(`val_return_mean` +12.6, `val_door_angle_final_mean` 0.021 rad) puis a régressé
+aux checkpoints 400k et 500k (0.015 et 0.017 rad).
+
+**Métriques observées (v3_curriculum) :**
+
+| Step | val_return | val_door_angle_final | val_approach_frac | critic_loss (max) |
+|---:|---:|---:|---:|---:|
+| 100k | +2.05 | 0.0037 | 0.60 | ~2 |
+| 200k | −0.55 | 0.0017 | 0.47 | ~4 |
+| 300k | +12.60 | 0.0213 | 1.03 | ~5 |
+| 400k | +8.0 | 0.0153 | — | ~6 |
+| 500k | +9.4 | 0.0169 | — | ~6+ |
+
+Le pic à 300k correspond à 10 épisodes de validation déterministes qui ont "eu de
+la chance" sur une politique légèrement meilleure. Ce n'est pas de la convergence :
+`theta_best_mean` en training restait à 0.0021–0.0038 rad (quelques dixièmes de
+degré), et `success_frac = 0` tout au long (aucun épisode n'a jamais atteint
+`theta_success=0.40` même avec exploration).
+
+**Cause profonde :** Le replay buffer contient 500k transitions sans aucun succès.
+La critic_loss croît de façon monotone (0 → 6+) car le critic tente d'apprendre
+des Q-values qui n'ont jamais été positives. L'actor est guidé par un critic de
+plus en plus instable → régression après 300k.
+
+**Fix appliqué (HER) :** Hindsight Experience Replay — après chaque épisode, 4
+transitions virtuelles sont créées pour chaque transition réelle avec un objectif
+relabellisé = un angle atteint plus tard dans le même épisode. Si la porte a
+atteint 0.02 rad, des succès virtuels sont créés pour `desired_goal=0.02 rad` →
+le critic apprend immédiatement à valoriser l'ouverture de porte.
+
+**Lien cours :** HER (Andrychowicz et al., 2017) — technique standard pour les
+tâches de manipulation avec reward sparse.
+
+---
+
+### 1.19 Replay Buffer Sans Signal Positif
+
+**Description :** Sur les 4 runs (v1 à v3_curriculum), la métrique
+`reward_hack/success_frac` est restée à 0 sur toute la durée. Aucun épisode
+d'entraînement n'a jamais déclenché le bonus de succès, même avec `theta_success`
+abaissé à 0.40.
+
+**Impact :** En off-policy RL, le critic estime `Q(s,a) = r + γ·V(s')`. Sans
+transitions avec `r > 0` liées à l'ouverture de la porte, `Q(s_handle, a_pull)`
+reste négatif ou nul → l'actor n'est jamais guidé vers la saisie. Les 500k–900k
+transitions dans le buffer décrivent un monde où ouvrir la porte ne rapporte rien.
+
+**Fix HER :** `GoalConditionedWrapper` retourne une observation augmentée
+`{observation, achieved_goal=[theta], desired_goal=[theta_success]}`.
+`HerReplayBuffer` crée 4 transitions virtuelles avec `desired_goal` = angles futurs
+atteints dans l'épisode. `compute_reward` retourne `0` si `achieved >= desired`,
+`-1` sinon. Résultat : pour chaque épisode où la porte a atteint 0.005 rad,
+le buffer reçoit des transitions qui disent "ouvrir à 0.005 rad = succès".
+
+---
+
+### 1.20 HER : reference_obs_space Dict Transmis aux Workers
+
+**Description :** Au démarrage de `train-sac-her`, tous les workers SpawnProcess
+crashaient avec `TypeError: int() argument must be a string…NoneType`.
+
+**Cause :** Dans `main()`, le code faisait :
+```python
+_ref_env = make_env_from_config(ctx.env_cfg, seed=ctx.seed)
+reference_obs_space = _ref_env.observation_space  # Dict space avec use_her=True
+```
+Ce `reference_obs_space` (Dict, sans `.shape`) était transmis à `RawRoboCasaAdapter`
+qui appelle `int(np.prod(reference_obs_space.shape))` → `shape=None` → crash.
+
+**Fix :**
+```python
+_inner = getattr(_ref_env, "_base", None)
+reference_obs_space = (
+    _inner.observation_space if _inner is not None else _ref_env.observation_space
+)
+```
+Les workers reçoivent maintenant le flat Box space interne (248D), puis
+`GoalConditionedWrapper` est appliqué par-dessus dans `make_env_from_config`.
+
+---
+
 ## 2. Limitations Related to Method Choices
 
 ### Summary Table
@@ -117,7 +237,7 @@ métrique primaire, jamais le `return_mean` seul.
 | 2.7 | Expérimental | Pas d'ablations sur les composantes reward | Impact individuel de chaque pénalité inconnu | Ablations : supprimer une composante à la fois, mesurer `approach_frac` et `success_rate` |
 | 2.8 | Tâche | Navigation exclue (base fixe) | Tâche simplifiée vs déploiement réel | Intégrer le contrôle de la base mobile |
 | 2.9 | Compute | Contrainte de temps (deadline 7 mai 2026) | Un seul seed, pas d'ablations, pas de tuning complet | Résultats présentés comme observations de cas unique |
-| 2.10 | Runs v1/v2 | 0 % de succès sur 700k steps (v1) et 100k steps (v2) | Runs abandonnés ; seul v3 est potentiellement valide | Fix v3 (`ent_coef=0.1` fixe + SDE) |
+| 2.10 | Runs v1/v2/v3/curriculum | 0 % de succès sur 500k (v1), 900k (v2), 400k (v3), 500k (curriculum) | Toutes les runs abandonnées avant convergence ; HER en cours | HER (`GoalConditionedWrapper` + `HerReplayBuffer`) |
 
 ---
 
@@ -219,18 +339,26 @@ interagit avec la tâche de manipulation.
 
 ---
 
-### 2.10 Runs v1 et v2 Abandonnés — 0% Success Rate
+### 2.10 Toutes les Runs Abandonnées — 0% Success Rate
 
-| Run | Steps réalisés | `val_success_rate` | `theta_best_mean` | Cause d'abandon |
-|---|---:|---:|---:|---|
-| SAC v1 | 700k | 0% | 0.001–0.012 | `ent_coef` crash → politique déterministe → actions saturées |
-| SAC v2 | 100k | 0% | À compléter | Même cause ; détectée plus tôt grâce aux métriques renforcées |
-| SAC v3 | En cours | À compléter | À compléter | Fix appliqué ; résultat inconnu |
+| Run | Steps | `val_success_rate` | `val_door_angle_final` (best) | `theta_best_mean` (training) | `critic_loss` max | Cause d'abandon |
+|---|---:|---:|---:|---:|---:|---|
+| SAC v1 | 500k | 0% | 0.000 rad | 0.006 rad | 48.0 | `ent_coef` auto crash → α→0.009 à 500k |
+| SAC v2 | 900k | 0% | 0.000 rad | 0.011 rad | 116 828 | Même crash retardé ; critic loss explose |
+| SAC v3 | 400k | 0% | 0.004 rad | 0.003 rad | 37.7 | Cold start — porte quasi-immobile |
+| SAC v3 curriculum | 500k | 0% | 0.021 rad (300k) | 0.004 rad | 10.3 | Pic transitoire, régression, buffer sans succès |
+| SAC HER | En cours | ? | ? | ? | ? | En cours |
 
-Ces deux échecs constituent un résultat expérimental en soi : ils démontrent que
-l'auto-tuning du coefficient d'entropie SAC est instable sur un espace d'action
-12D lorsque la `log_prob` de la politique initiale est structurellement inférieure
-au `target_entropy`.
+Ces échecs successifs constituent un résultat expérimental en soi : ils démontrent
+que SAC standard ne converge pas sur cette tâche de manipulation précise sans un
+mécanisme de création de signal positif (HER). Chaque run a néanmoins résolu un
+problème spécifique et affiné le diagnostic :
+
+- **v1** : identifie le crash d'auto-tuning de `ent_coef`
+- **v2** : confirme que le problème est structurel (pas juste l'initialisation)
+- **v3** : prouve que stabiliser `α` ne suffit pas — cold start est le vrai obstacle
+- **curriculum** : prouve que baisser le seuil de succès ne suffit pas — le buffer reste vide de succès
+- **HER** : adresse la cause racine — crée du signal positif sans succès réels
 
 ---
 

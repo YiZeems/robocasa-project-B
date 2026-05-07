@@ -10,21 +10,22 @@
 
 | Amélioration | Motivation | Impact attendu | Difficulté | Priorité | Concept cours |
 |---|---|---|---|---|---|
-| Fix `ent_coef` : valeur fixe (v3) | Auto-tuning crash → α→0 → politique déterministe | Apprentissage stable, exploration maintenue | Faible | **Critique (fait)** | Exploration vs exploitation |
-| `use_sde=True` (v3) | Bruit corrélé à l'état → mouvements cohérents vers la poignée | Premier contact plus rapide | Faible | **Haute (fait)** | Exploration structurée |
-| `gradient_steps=4` + `tau=0.01` (v2/v3) | Critic loss spikes à 500k steps → divergence | Stabilité de l'entraînement | Faible | **Critique (fait)** | Actor-critic — stabilité du critic |
-| `eval_freq=100k` + `n_eval_episodes=10` | Validation = 82% du wall time en v1 | Throughput ×3–4 | Faible | **Haute (fait)** | Protocole expérimental |
-| `obj_registries=[lightwheel]` | Reset 9.3s vs 4.8s avec assets légers | Throughput ×1.9 | Faible | **Haute (fait)** | Efficacité computationnelle |
-| `control_freq=20` | Simulation 2× plus lente que nécessaire | Throughput ×2 | Faible | **Haute (fait)** | Simulation physique |
-| Observation normalisation (`VecNormalize`) | Observations brutes sur 220D de scales très différentes | Convergence SAC plus rapide, gradients stables | Faible | Haute | Variance reduction — policy gradient |
-| Curriculum learning (initial door angle) | Tâche pleine difficulté dès le départ → exploration peu efficace | Premier succès < 100k steps | Moyenne | Haute | Curriculum learning |
-| BC pre-training + SAC fine-tuning | Exploration aléatoire gaspille des milliers d'épisodes | Succès non nul dès les premiers épisodes | Moyenne | Haute | Imitation learning |
-| Ablations sur les composantes reward | Impact individuel de chaque composante inconnu | Simplification du reward + compréhension | Faible–Moyenne | Haute | Reward shaping — analyse |
-| Multi-seed (3–5 seeds) | Seed unique → variance inconnue | Conclusions statistiquement valides | Faible (coût compute) | Haute | Robustesse statistique |
-| Comparaison TD3 | Isole la contribution de l'entropie (SAC vs TD3) | Compréhension de l'exploration entropique | Faible | Moyenne | Off-policy actor-critic |
-| Replay buffer inspection | Buffer peut contenir 100% de transitions sans signal | Diagnostic de la qualité du buffer | Faible | Moyenne | Off-policy learning |
-| Critère de succès soutenu | Succès momentané ≠ porte maintenue ouverte | Alignement évaluation / objectif réel | Faible | Moyenne | Protocole d'évaluation |
-| Évaluation sur configs hors distribution | Tâche validée sur les seeds d'entraînement uniquement | Test de généralisation réelle | Moyenne | Moyenne | Généralisation en robotique |
+| Fix `ent_coef` : valeur fixe (v3) | Auto-tuning crash → α→0 → politique déterministe | Apprentissage stable, exploration maintenue | Faible | **Critique — fait (v3)** | Exploration vs exploitation |
+| `use_sde=True` (v3) | Bruit corrélé à l'état → mouvements cohérents vers la poignée | Premier contact plus rapide | Faible | **Critique — fait (v3)** | Exploration structurée |
+| `gradient_steps=4` + `tau=0.01` (v2/v3) | Critic loss spikes > 40k steps → divergence | Stabilité de l'entraînement | Faible | **Critique — fait (v2/v3)** | Actor-critic — stabilité du critic |
+| LR schedule cosine (v3) | LR constant → sur-apprentissage en fin de run | Convergence plus nette, pas de remontée loss | Faible | **Haute — fait (v3)** | Optimisation |
+| `eval_freq=100k` + `n_eval_episodes=10` | Validation = 82% du wall time en v1 | Throughput ×3–4 | Faible | **Haute — fait (v2/v3)** | Protocole expérimental |
+| `obj_registries=[lightwheel]` | Reset 9.3s vs 4.8s avec assets légers | Throughput ×1.9 | Faible | **Haute — fait** | Efficacité computationnelle |
+| `control_freq=20` | Simulation 2× plus lente que nécessaire | Throughput ×2 | Faible | **Haute — fait** | Simulation physique |
+| Curriculum learning spawn + theta_success (v3_curriculum) | Cold start — exploration jamais productive sur tâche pleine | Pic à 0.021 rad à 300k, signal positif | Faible | **Haute — fait, insuffisant** | Curriculum learning |
+| HER (Hindsight Experience Replay) | Buffer 100% sans succès → critic ne valorise pas l'ouverture | Premier succès virtuel dès le 1er épisode | Moyenne | **Critique — en cours** | Off-policy learning + exploration |
+| Observation normalisation (`VecNormalize`) | Observations brutes sur 248D de scales très différentes | Convergence SAC plus rapide, gradients stables | Faible | Haute (post-deadline) | Variance reduction — policy gradient |
+| BC pre-training + SAC fine-tuning | Exploration aléatoire gaspille des milliers d'épisodes | Succès non nul dès les premiers épisodes | Moyenne | Haute (post-deadline) | Imitation learning |
+| Ablations sur les composantes reward | Impact individuel de chaque composante inconnu | Simplification du reward + compréhension | Faible–Moyenne | Haute (post-deadline) | Reward shaping — analyse |
+| Multi-seed (3–5 seeds) | Seed unique → variance inconnue | Conclusions statistiquement valides | Faible (coût compute) | Haute (post-deadline) | Robustesse statistique |
+| Comparaison TD3 | Isole la contribution de l'entropie (SAC vs TD3) | Compréhension de l'exploration entropique | Faible | Moyenne (post-deadline) | Off-policy actor-critic |
+| Critère de succès soutenu | Succès momentané ≠ porte maintenue ouverte | Alignement évaluation / objectif réel | Faible | Moyenne (post-deadline) | Protocole d'évaluation |
+| Évaluation sur configs hors distribution | Tâche validée sur les seeds d'entraînement uniquement | Test de généralisation réelle | Moyenne | Moyenne (post-deadline) | Généralisation en robotique |
 | Intégration navigation (base mobile) | Base fixe = tâche simplifiée | Tâche complète PandaOmron | Très haute | Basse (post-deadline) | Manipulation + navigation |
 | Sim-to-real transfer | Politique simulée ≠ comportement réel | Déploiement sur vrai robot | Très haute | Basse (post-deadline) | Sim-to-real gap |
 
@@ -96,34 +97,57 @@ de sauvegarder et charger les statistiques de normalisation avec le checkpoint.
 
 ---
 
-### 1.4 Curriculum Learning
+### 1.4 Curriculum Learning — Fait, Insuffisant (v3_curriculum)
 
-**État actuel :** La tâche est présentée à pleine difficulté dès le premier épisode —
-porte entièrement fermée, robot en position initiale. Les premiers contacts utiles
-avec la poignée sont découverts par chance.
+**État actuel (avant v3_curriculum) :** La tâche est présentée à pleine difficulté
+dès le premier épisode. `theta_success=0.90` n'est jamais atteint.
 
-**Amélioration :** Curriculum en 3 étapes sur l'angle initial de la porte :
+**Amélioration implémentée :** `theta_success=0.40` + spawn déviation réduite
+(`pos_x: 0.05`, `pos_y: 0.02`) + pénalités adoucies (`w_wrong_dir: 0.05`,
+`w_stagnation: 0.02`).
 
-```python
-# Étape 1 : porte pré-ouverte à 50%
-initial_theta = 0.50
+**Résultat observé :**
+- 300k steps : `val_return_mean` = +12.6, `val_door_angle_final_mean` = 0.021 rad — signal positif
+- 500k steps : retour à 0.017 rad — régression après le pic
+- `success_frac = 0` tout au long — même 0.40 jamais atteint
+- `theta_best_mean` training = 0.002–0.004 rad — porte quasi-immobile même avec exploration
 
-# Étape 2 : porte pré-ouverte à 20%
-initial_theta = 0.20
+**Verdict :** Le curriculum a apporté un signal positif transitoire mais n'a pas
+résolu le problème fondamental — le replay buffer reste vide de succès confirmés.
+Le critic ne valorise pas l'ouverture de porte car il n'a jamais vu de transition
+avec reward de succès.
 
-# Étape 3 : tâche complète, porte fermée
-initial_theta = 0.00
-```
+**Lien cours :** Curriculum learning — efficace pour guider l'exploration, mais
+insuffisant quand la reward sparse elle-même n'est jamais déclenchée. Nécessite
+d'être combiné avec HER pour ce type de tâche.
 
-Implémentation dans `envs/factory.py` en passant `initial_door_angle` à
-l'initialisation de l'environnement RoboCasa.
+---
 
-**Lien cours :** Curriculum learning — la difficulté progressive réduit le défi
-d'exploration. L'agent accumule la reward de succès plus tôt, rendant le credit
-assignment tractable dès le début de l'entraînement.
+### 1.4b HER (Hindsight Experience Replay) — En cours
 
-**Impact attendu :** Premier succès en < 100k steps (vs plusieurs centaines de
-milliers sans curriculum). Taux de succès final plus élevé.
+**Motivation :** Après v1→v2→v3→curriculum, le diagnostic est clair : le replay
+buffer ne contient jamais de transition avec reward de succès (`success_frac=0`
+sur 2.3M steps cumulés). Sans signal positif, le critic ne peut pas apprendre à
+valoriser l'ouverture de la porte.
+
+**Amélioration :** `HerReplayBuffer` avec `GoalConditionedWrapper` :
+- Observation augmentée : `{observation, achieved_goal=[θ], desired_goal=[θ_success]}`
+- Reward sparse : `0` si `θ ≥ θ_success`, `−1` sinon
+- Pour chaque transition réelle, 4 transitions virtuelles avec `desired_goal` = angles futurs atteints dans l'épisode
+- Si la porte a atteint 0.01 rad pendant l'épisode, des succès virtuels sont créés pour `desired_goal=0.01 rad`
+
+**Config :** `configs/train/open_single_door_sac_her.yaml`
+- `theta_success: 0.15 rad` (objectif HER, plus accessible que 0.40)
+- `her_n_sampled_goal: 4`, `her_goal_strategy: future`
+- `MultiInputPolicy` (gère les observations dict)
+
+**Implémentation :**
+- `GoalConditionedWrapper` dans `envs/factory.py` (interface GoalEnv SB3)
+- `use_her: true` dans la config train → `HerReplayBuffer` automatique dans `_build_sac`
+
+**Lien cours :** Off-policy learning avec replay buffer de qualité. HER (Andrychowicz
+et al., 2017) est la solution standard pour les tâches de manipulation avec reward
+sparse — permet d'apprendre même quand aucun succès réel n'est observé.
 
 ---
 
@@ -285,23 +309,23 @@ uniquement pour la distribution d'entraînement n'est pas utile en déploiement.
 
 ## 2. Roadmap Prioritaire
 
-### Court terme (avant ou juste après la deadline)
+### Fait (avant deadline)
 
-1. Observation normalisation (`VecNormalize`) — faible effort, impact élevé sur la
-   stabilité de SAC v3.
-2. Analyse du replay buffer en cours de run — diagnostic sur la qualité du buffer
-   v3.
+- `ent_coef=0.1` fixe (v3) — résout le crash d'auto-tuning de v1/v2
+- `use_sde=True`, `sde_sample_freq=64` (v3) — exploration cohérente
+- `gradient_steps=4`, `tau=0.01` (v2/v3) — stabilité du critic
+- LR cosine schedule 3e-4 → 1e-5 (v3)
+- Curriculum learning : `theta_success=0.40`, spawn déviation réduite (v3_curriculum)
+- HER : `GoalConditionedWrapper` + `HerReplayBuffer`, `theta_success=0.15` (en cours)
 
-### Moyen terme (1–4 semaines post-deadline)
+### Post-deadline prioritaire
 
-3. Multi-seed (3–5 seeds) — transforme les résultats anecdotiques en résultats
-   statistiquement valides.
-4. Ablations sur les composantes reward — quantifie l'utilité de chaque composante.
-5. Curriculum learning — amélioration la plus impactante sur le taux de convergence.
+- Observation normalisation (`VecNormalize`) — faible effort, fort impact
+- Multi-seed (3–5 seeds) — résultats statistiquement valides
+- Ablations reward — quantifier l'utilité de chaque composante
 
-### Long terme (1 semestre post-deadline)
+### Long terme
 
-6. BC pre-training + SAC fine-tuning — transformerait ce projet de cours en
-   contribution publiable sur l'efficacité d'exploration.
-7. Évaluation sur configurations hors distribution — test de généralisation réelle.
-8. Intégration navigation + base mobile — tâche complète PandaOmron.
+- BC pre-training + SAC fine-tuning — résout définitivement le cold start
+- Évaluation hors distribution — test de généralisation réelle
+- Intégration navigation + base mobile — tâche complète PandaOmron
