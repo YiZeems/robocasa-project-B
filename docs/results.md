@@ -1,52 +1,60 @@
 # Résultats expérimentaux
 
-> **Statut** : mise à jour après les 4 premiers runs complets (v1, v2, v3, v3_curriculum).  
-> Le run HER est en cours — ses métriques seront ajoutées ici dès sa conclusion.
+> **Statut** : mise à jour après 6 runs (v1, v2, v3, v3_curriculum, HER v1, HER v2). HER v3 en cours.
 
 ---
 
 ## 1. Résumé des runs
 
-| Run | Algo | Steps | Val. Success | `door_angle_final` (rad) | Problème diagnostiqué | Arrêtée |
+| Run | Algo | Steps | Val. Success | `door_angle_max` (rad) | Problème diagnostiqué | Arrêtée |
 |---|---|---:|---:|---:|---|---|
-| SAC v1 | SAC | 500k | **0%** | 0.000 | `ent_coef` crash α→0 (critic loss 40k+) | Oui |
-| SAC v2 | SAC | 900k | **0%** | 0.000 | `ent_coef` auto-tuning inévitablement α→0 | Oui |
-| SAC v3 | SAC | 400k | **0%** | 0.004 | Cold start — pas de contact poignée | Oui |
-| SAC v3 Curriculum | SAC | 500k | **0%** | 0.021 (pic 300k) | Buffer sans signal de succès | Oui |
-| SAC HER | SAC+HER | en cours | — | — | — | Non |
+| SAC v1 | SAC | 500k | 0% | 0.014 | `ent_coef` crash α→0, critic loss 48k | Oui |
+| SAC v2 | SAC | 900k | 0% | 0.017 | Auto-tuning α→0 inévitable, critic loss 116k | Oui |
+| SAC v3 | SAC | 400k | 0% | 0.012 | Cold start — pas de contact poignée | Oui |
+| SAC v3 Curriculum | SAC | 500k | 0% | 0.039 | Buffer sans succès, pic transitoire 300k | Oui |
+| SAC HER v1 | SAC+HER | 200k | 0% | 0.000 | Reward sparse pur → cold start non résolu | Oui |
+| **SAC HER v2** | SAC+HER | 300k | 0% | **0.133** ★ | Hover-hacking après 200k | Oui |
+| SAC HER v3 | SAC+HER | en cours | — | — | — | Non |
 
-> Toutes les métriques reportées ici correspondent au **checkpoint final** (pas de best checkpoint car succès = 0 dans tous les runs).
+> **Record :** HER v2 best checkpoint (step 200k) — `val_door_angle_max_mean = 0.133 rad`, première ouverture réelle de la porte.
 
 ---
 
 ## 2. Métriques clés par run
 
-### 2.1 Métriques validation (déterministiques)
+### 2.1 Métriques validation (politique deterministe)
 
-| Run | `val_return_mean` | `door_angle_final` (rad) | `door_angle_max` (rad) | `val_success_rate` |
+| Run | `val_return_mean` (final) | `door_angle_final` (rad) | `door_angle_max` (rad) | `val_success_rate` |
 |---|---:|---:|---:|---:|
-| SAC v1 (500k) | ~ -3.5 | 0.000 | 0.014 | 0% |
-| SAC v2 (900k) | ~ -2.8 | 0.000 | 0.017 | 0% |
-| SAC v3 (400k) | ~ -1.2 | 0.004 | 0.012 | 0% |
+| SAC v1 (500k) | ~-3.5 | 0.000 | 0.014 | 0% |
+| SAC v2 (900k) | ~-2.8 | 0.000 | 0.017 | 0% |
+| SAC v3 (400k) | ~-1.2 | 0.004 | 0.012 | 0% |
 | SAC v3 Curriculum (500k) | +12.6 (pic 300k) | 0.021 (pic 300k) | 0.039 | 0% |
+| SAC HER v1 (200k) | -500.0 | 0.000 | 0.000 | 0% |
+| **SAC HER v2 (300k)** | **-483** | 0.003 | **0.133** ★ | 0% |
 
 ### 2.2 Métriques train internes
 
 | Run | `ent_coef` final | `critic_loss` max | `actor_loss` final | `theta_best_mean` (rad) |
 |---|---:|---:|---:|---:|
-| SAC v1 (500k) | 0.009 (crash α→0) | ~48 000 | -37.5 | ~0.003 |
-| SAC v2 (900k) | 0.001 (crash α→0) | ~116 828 | +7.2 (diverge) | ~0.003 |
+| SAC v1 (500k) | 0.009 (crash) | ~48 000 | -37.5 | ~0.003 |
+| SAC v2 (900k) | 0.001 (crash) | ~116 828 | +7.2 (diverge) | ~0.003 |
 | SAC v3 (400k) | 0.100 (stable) | 37.7 | -47.1 | ~0.003 |
 | SAC v3 Curriculum (500k) | 0.100 (stable) | 10.3 | -48.2 | ~0.004 |
+| SAC HER v1 (200k) | ~0.1 (stable) | ~6 | -25 | ~0.001 |
+| SAC HER v2 (300k) | 0.100 (stable) | ~8 (pic 100k) | -25 | ~0.0015 |
 
 ### 2.3 Métriques anti-hacking (validation)
 
-| Run | `approach_frac` | `stagnation_steps` | `sign_changes` | Hover hacking ? |
+| Run | `approach_frac` | `action_magnitude` | `sign_changes` | Hover hacking ? |
 |---|---:|---:|---:|---|
-| SAC v1 (500k) | élevé (~0.6) | élevé (>200) | élevé (>10) | Oui (probable) |
-| SAC v2 (900k) | élevé (~0.5) | élevé (>200) | élevé (>10) | Oui (probable) |
-| SAC v3 (400k) | ~0.4 | ~180 | ~8 | Partiel |
-| SAC v3 Curriculum (500k) | ~0.3 | ~150 | ~6 | Partiel |
+| SAC v1 (500k) | ~0.6 | ~0.3 | >10 | Oui |
+| SAC v2 (900k) | ~0.5 | ~0.3 | >10 | Oui |
+| SAC v3 (400k) | ~0.4 | ~0.5 | ~8 | Partiel |
+| SAC v3 Curriculum (500k) | ~0.3 | ~0.5 | ~6 | Partiel |
+| SAC HER v1 (200k) | ~0.0 | ~0.77 | ~0 | Non |
+| SAC HER v2 @200k (best) | 0.025 | 0.79 | 3.5 | Non |
+| SAC HER v2 @300k | 0.047 | 0.61 | 3.5 | Debut |
 
 > **Interprétation cible :** `approach_frac` < 0.3, `stagnation_steps` < 20, `sign_changes` < 5, `door_angle_max` > 0.8.  
 > Aucun run n'a atteint ces cibles — la porte ne s'est jamais ouverte significativement.

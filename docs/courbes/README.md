@@ -175,31 +175,81 @@ Utiliser **HER (Hindsight Experience Replay)** : après chaque épisode échoué
 
 ---
 
-## Run SAC HER — en cours
+## Run SAC HER v1 — 200k steps
 
+**Dossier :** [`run_sac_her/`](run_sac_her/)
+**Run ID :** `20260507_162045`
 **Config :** `open_single_door_sac_her.yaml`
-**Commande :** `make train-sac-her`
 
 ### Paramètres clés
 
 | Paramètre | Valeur |
 |---|---|
 | `use_her` | true |
-| `her_n_sampled_goal` | 4 (4 goals virtuels par transition réelle) |
-| `her_goal_strategy` | `future` (goals = états futurs du même épisode) |
-| `theta_success` | 0.15 rad (objectif HER, atteint progressivement) |
-| `policy` | `MultiInputPolicy` (gère les observations dict) |
-| Reward | **sparse** : 0 si theta ≥ theta_success, -1 sinon |
+| `her_n_sampled_goal` | 4 |
+| `her_goal_strategy` | `future` |
+| `theta_success` | 0.15 rad |
+| `policy` | `MultiInputPolicy` |
+| Reward | **sparse pur** : 0 si theta ≥ theta_success, -1 sinon |
+| `w_approach` | 0.0 (tous les poids = 0) |
 
-### Principe de HER
+### Ce qui s'est passé
 
-Pour chaque épisode où la porte a atteint un angle maximum `θ_max` :
-1. On garde les transitions réelles avec reward sparse (-1 car θ_success=0.15 jamais atteint)
-2. On crée 4 transitions virtuelles par step où l'objectif est remplacé par un angle futur réellement atteint dans l'épisode → ces transitions ont reward=0 (succès virtuel)
+HER fonctionne mécaniquement (`train/actor_loss` 0 → -25, décroissant ✅), mais le mécanisme HER ne peut pas débloquer le cold start seul. Avec reward sparse pur et all-zero dense weights, **aucun signal ne guide l'exploration vers la poignée**. Max angle en training : 0.002 rad (pire qu'en v3 avec 0.003 rad). En validation déterministe : `val_door_angle_max_mean = 0.0` — porte totalement fermée.
 
-Résultat : le critic apprend que "ouvrir la porte à X rad est bien" même si X < 0.15. L'actor est guidé vers des mouvements qui ouvrent davantage la porte à chaque épisode.
+**`val_return_std` : 12.9 → 0.0** à 200k — tous les épisodes terminent identiquement à -500. Politique complètement déterministe, convergée sur un minimum local.
 
-Les courbes seront disponibles dans [`run_sac_her/`](run_sac_her/) après 200k steps.
+**Bug `ent_coef` :** MLflow affichait 0.003 (au lieu de 0.1). Cause identifiée : avec `MultiInputPolicy` + `HerReplayBuffer`, SB3 logge le coefficient différemment en mode fixe. Le coefficient était bien 0.1 en pratique (confirmé par le comportement stable du training), mais le logging était trompeur.
+
+### Pourquoi arrêtée
+
+200k steps, theta_best DÉCROISSANT (0.0011 → 0.0008 rad). HER pur sans reward dense = cold start non résolu.
+
+### Amélioration apportée → HER v2
+
+Réintroduire le **reward dense** dans les transitions réelles (`w_approach=0.3`, `w_progress=1.0`) tout en gardant HER sparse pour les transitions virtuelles. Le reward dense guide l'exploration vers la poignée ; HER relabellise les succès partiels.
+
+---
+
+## Run SAC HER v2 — 300k steps
+
+**Dossier :** [`run_sac_her_v2/`](run_sac_her_v2/)
+**Run ID :** `20260507_174253`
+**Config :** `open_single_door_sac_her_v2.yaml`
+
+### Paramètres clés
+
+| Paramètre | Valeur |
+|---|---|
+| `use_her` | true |
+| `her_n_sampled_goal` | 4 |
+| `theta_success` | 0.10 rad |
+| `w_approach` | **0.3** (reward hybride) |
+| `w_progress` | **1.0** |
+| Reward réel | shaped_reward + sparse (-1/step) |
+| Reward virtuel (HER) | sparse uniquement |
+
+### Ce qui s'est passé
+
+**Breakthrough à 200k steps :** `val_door_angle_max_mean = 0.133 rad` — première fois en 6 runs que la porte s'ouvre significativement (0.133 rad = ~7.6°). Dépassait le seuil de succès (theta_success=0.10 rad) de façon momentanée. `val_return_mean` -496 → -491, `progress_frac > 0` et croissant.
+
+**Régression à 300k steps :** `val_door_angle_max_mean` redescend à 0.110 rad. L'agent dérive vers le **hover-hacking** : `val_approach_frac_mean` croît (0.015 → 0.047), `val_action_magnitude_mean` décroît (0.82 → 0.61). L'agent reste proche de la poignée pour maximiser `w_approach=0.3` sans pousser fort — minimum local du reward hybride.
+
+**`val_door_angle_final_mean` reste à ~0.001-0.003 rad :** la porte s'ouvre en milieu d'épisode mais se referme avant le step final. L'agent pousse puis relâche → pas de succès (mesuré au dernier step).
+
+**`val_success_rate = 0` tout le long :** la porte n'est jamais ouverte AU dernier step.
+
+### Meilleur checkpoint
+
+`best_model.zip` sauvegardé au step 200k — `val_door_angle_max_mean = 0.133 rad`, meilleur résultat de tout le projet.
+
+### Pourquoi arrêtée
+
+300k steps. Hover-hacking confirmé (approach_frac croissant, action_magnitude décroissant). Le minimum local s'aggravait.
+
+### Amélioration apportée → HER v3
+
+**Supprimer `w_approach`** pour éliminer l'incitation à hover. Seuls `w_progress=2.0` + `w_success=3.0` (bonus par step quand porte ≥ theta_success) guident la politique → force à **maintenir** l'ouverture. `w_stagnation=0.05` pénalise le hover sans progression.
 
 ---
 
@@ -249,15 +299,21 @@ Les courbes seront disponibles dans [`run_sac_her/`](run_sac_her/) après 200k s
 ## Résumé de la progression
 
 ```
-v1 (500k) → ent_coef crash (α→0, critic loss 40 000+)         → 0% succès
+v1 (500k)           → ent_coef crash (α→0, critic loss 40 000+)           → 0% succès, door_max=0.014 rad
     ↓ Fix: ent_coef=auto_0.1, target_entropy=-4
-v2 (900k) → α crash quand même (log_prob toujours < target)   → 0% succès
+v2 (900k)           → α crash quand même (log_prob toujours < target)     → 0% succès, door_max=0.017 rad
     ↓ Fix: ent_coef=0.1 FIXE (plus d'auto-tuning)
-v3 (400k) → stable, mais porte quasi-fermée (cold start)       → 0% succès
+v3 (400k)           → stable, mais cold start (porte quasi-fermée)        → 0% succès, door_max=0.012 rad
     ↓ Fix: curriculum (theta_success=0.40, spawn réduit)
-v3_curriculum (500k) → pic à 300k (0.021 rad), puis régression → 0% succès
+v3_curriculum (500k)→ pic 300k (0.021 rad), régression, buffer sans signal → 0% succès, door_max=0.039 rad
     ↓ Fix: HER (relabellisation rétroactive des goals)
-HER (en cours) → objectif: premier succès réel
+HER v1 (200k)       → reward sparse pur → cold start non résolu           → 0% succès, door_max=0.000 rad
+    ↓ Fix: reward hybride (dense shaping + HER sparse)
+HER v2 (300k)       → BREAKTHROUGH 0.133 rad à 200k, puis hover-hacking  → 0% succès, door_max=0.133 rad ★
+    ↓ Fix: supprimer w_approach, forcer progress+success uniquement
+HER v3 (en cours)   → objectif: premier succès réel
 ```
 
-Chaque itération a résolu un problème précis mais en a révélé un nouveau. Le diagnostic s'est affiné à chaque run grâce aux métriques détaillées (reward_hack, critic_loss, theta_best).
+**Record absolu : HER v2 — `val_door_angle_max_mean = 0.133 rad` (best checkpoint step 200k)**
+
+Chaque itération a résolu un problème précis mais en a révélé un nouveau. Le diagnostic s'est affiné à chaque run grâce aux métriques détaillées (`reward_hack`, `critic_loss`, `theta_best`, `approach_frac`).

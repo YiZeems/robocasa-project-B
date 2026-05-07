@@ -2,7 +2,7 @@
 
 **Module** : IA705 — Apprentissage pour la robotique, Telecom Paris
 **Date** : 7 mai 2026
-**Statut** : SAC v1 abandonné · SAC v2 abandonné · SAC v3 abandonné · SAC v3 curriculum abandonné · SAC HER en cours · PPO non lancé
+**Statut** : SAC v1–v3 + curriculum abandonnés · HER v1 abandonné · HER v2 abandonné (hover-hacking) · HER v3 en cours · PPO non lancé
 
 ---
 
@@ -32,7 +32,9 @@
 | SAC v2 | `sac_v2.yaml` | Abandonné | 900k | 0% | 0.000 rad | Même crash retardé ; critic loss 116 828 |
 | SAC v3 | `sac_v3.yaml` | Abandonné | 400k | 0% | 0.004 rad | Cold start — porte quasi-immobile |
 | SAC v3 curriculum | `sac_v3_curriculum.yaml` | Abandonné | 500k | 0% | 0.021 rad (300k) | Pic 300k, régression, buffer sans succès |
-| SAC HER | `sac_her.yaml` | En cours | — | ? | ? | Premier run avec signal positif garanti |
+| SAC HER v1 | `sac_her.yaml` | Abandonné | 200k | 0% | 0.000 rad | Reward sparse pur, cold start non resolu |
+| SAC HER v2 | `sac_her_v2.yaml` | Abandonné | 300k | 0% | 0.133 rad ★ | Hover-hacking apres 200k |
+| SAC HER v3 | `sac_her_v3.yaml` | En cours | — | ? | ? | Fix hover-hack : w_approach=0 |
 | PPO baseline | `ppo_baseline.yaml` | Non lancé | — | — | — | Deadline atteinte |
 
 ### 1.3 Issues Identified and Resolved
@@ -50,8 +52,10 @@
 | OOM WSL2 | 12 × 3.4 GB > RAM configurée | .wslconfig memory=56GB | v1 |
 | oscillation_frac négatif | Pénalité / total sans abs() | abs() au numérateur | v2 |
 | Cold start — porte quasi-immobile | Buffer sans succès → critic ne valorise pas ouverture | Curriculum + HER | v3 |
-| Pic transitoire sans convergence stable | Success_frac=0 → critic diverge après 300k | HER relabellisation | v3_curriculum |
-| HER reference_obs_space Dict crash | GoalConditionedWrapper retourne Dict sans .shape | Extraction du flat Box interne | HER démarrage |
+| Pic transitoire sans convergence stable | Success_frac=0 → critic diverge apres 300k | HER relabellisation | v3_curriculum |
+| HER reference_obs_space Dict crash | GoalConditionedWrapper retourne Dict sans .shape | Extraction du flat Box interne | HER v1 demarrage |
+| HER v1 cold start (reward sparse pur) | Sans reward dense, agent ne trouve pas la poignee | Reward hybride shaped+sparse | HER v1 |
+| HER v2 hover-hacking | w_approach=0.3 → rester pres poignee sans pousser | Supprimer w_approach, ajouter w_success | HER v2 @300k |
 
 ---
 

@@ -47,6 +47,18 @@ RUNS = {
         "label": "SAC v3 Curriculum — theta_success=0.40, spawn=0.05 (500k steps)",
         "color": "#5bac6e",
     },
+    "run_sac_her": {
+        "run_id": "81d3c63ccfe94fe3",
+        "output_dir": "outputs/OpenCabinet_SAC_seed0_20260507_162045",
+        "label": "SAC HER v1 — sparse pur, reward=0 (200k steps)",
+        "color": "#9b59b6",
+    },
+    "run_sac_her_v2": {
+        "run_id": "94ad73ca2b1f48ee",
+        "output_dir": "outputs/OpenCabinet_SAC_seed0_20260507_174253",
+        "label": "SAC HER v2 — hybrid reward, door_angle_max=0.133 rad (300k steps)",
+        "color": "#1abc9c",
+    },
 }
 
 MIN_STEPS = 200_000
