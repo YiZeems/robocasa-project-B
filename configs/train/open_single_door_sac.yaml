@@ -16,13 +16,15 @@ train:
   total_timesteps: 3000000
 
   learning_rate: 3.0e-4
+  # lr_schedule: cosine   # constant (default) | linear | cosine
+  # lr_min: 1.0e-5        # floor LR for linear/cosine schedules
   buffer_size: 1000000
   batch_size: 512
   learning_starts: 1000
   tau: 0.005
   gamma: 0.99
   train_freq: 1
-  gradient_steps: 12
+  gradient_steps: 1
   ent_coef: auto
   target_update_interval: 1
   net_arch: [256, 256]
@@ -33,8 +35,8 @@ train:
   eval_episodes: 5
   device: auto   # resolved to cuda > mps > cpu by utils/device.resolve_device
 eval:
-  eval_freq: 25000
-  n_eval_episodes: 50
+  eval_freq: 100000
+  n_eval_episodes: 5
   validation_seed: 10000
   test_seed: 20000
   early_stopping_patience: 20

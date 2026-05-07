@@ -42,6 +42,36 @@ from .render_best_run import render_best_checkpoint_video
 
 
 SUPPORTED_ALGOS = {"PPO", "SAC"}
+
+
+def _resolve_lr(train_cfg: dict[str, Any]):
+    """Return a learning-rate schedule callable (or float) for SB3.
+
+    YAML options:
+      learning_rate: 3.0e-4          # base LR
+      lr_schedule: constant          # constant (default) | linear | cosine
+      lr_min: 0.0                    # floor for linear/cosine (default 0)
+
+    SB3 passes progress_remaining ∈ [1.0 → 0.0] to the callable.
+    """
+    import math
+
+    lr = float(train_cfg.get("learning_rate", 3e-4))
+    schedule = str(train_cfg.get("lr_schedule", "constant")).lower()
+    lr_min = float(train_cfg.get("lr_min", 0.0))
+
+    if schedule == "constant":
+        return lr
+    if schedule == "linear":
+        def _linear(p: float) -> float:
+            return lr_min + (lr - lr_min) * p
+        return _linear
+    if schedule == "cosine":
+        def _cosine(p: float) -> float:
+            # p=1 → lr, p=0 → lr_min
+            return lr_min + 0.5 * (lr - lr_min) * (1.0 + math.cos(math.pi * (1.0 - p)))
+        return _cosine
+    raise ValueError(f"Unknown lr_schedule '{schedule}'. Choose: constant, linear, cosine")
 BEST_RUN_VIDEO_ENV = "ROBOCASA_RENDER_BEST_RUN_VIDEO"
 BEST_RUN_VIDEO_MAX_STEPS_ENV = "ROBOCASA_RENDER_BEST_RUN_VIDEO_MAX_STEPS"
 BEST_RUN_VIDEO_FPS_ENV = "ROBOCASA_RENDER_BEST_RUN_VIDEO_FPS"
@@ -349,7 +379,7 @@ def _build_ppo(
     return PPO(
         policy=train_cfg.get("policy", "MlpPolicy"),
         env=env,
-        learning_rate=float(train_cfg.get("learning_rate", 3e-4)),
+        learning_rate=_resolve_lr(train_cfg),
         n_steps=int(train_cfg.get("n_steps", 2048)),
         batch_size=int(train_cfg.get("batch_size", 256)),
         gamma=float(train_cfg.get("gamma", 0.99)),
@@ -387,7 +417,7 @@ def _build_sac(
     return SAC(
         policy=train_cfg.get("policy", "MlpPolicy"),
         env=env,
-        learning_rate=float(train_cfg.get("learning_rate", 3e-4)),
+        learning_rate=_resolve_lr(train_cfg),
         buffer_size=int(train_cfg.get("buffer_size", 1_000_000)),
         learning_starts=int(train_cfg.get("learning_starts", 10_000)),
         batch_size=int(train_cfg.get("batch_size", 256)),
@@ -870,8 +900,8 @@ def _make_vec_env(
 ) -> Any:
     """Build a parallel VecEnv with n_envs workers.
 
-    Uses SubprocVecEnv (fork) for n_envs > 1 — fork is the Linux/WSL default
-    and avoids the slow re-import overhead of spawn.
+    Uses SubprocVecEnv (spawn) for n_envs > 1 — spawn is safe on WSL2/Linux
+    and avoids MuJoCo state inheritance issues that fork causes after ref env init.
     Pass vec_env_backend="dummy" to force single-process mode (for debugging).
     Each worker gets a unique seed so scenes and object layouts differ.
     """
@@ -892,7 +922,7 @@ def _make_vec_env(
     if use_dummy:
         return DummyVecEnv(factories)
 
-    return SubprocVecEnv(factories, start_method="fork")
+    return SubprocVecEnv(factories, start_method="spawn")
 
 
 def main() -> None:

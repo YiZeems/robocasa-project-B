@@ -16,13 +16,15 @@ train:
   total_timesteps: 300000
 
   learning_rate: 3.0e-4
+  # lr_schedule: cosine   # constant (default) | linear | cosine
+  # lr_min: 1.0e-5        # floor LR for linear/cosine schedules
   buffer_size: 200000
   batch_size: 512
   learning_starts: 1000
   tau: 0.005
   gamma: 0.99
   train_freq: 1
-  gradient_steps: 12
+  gradient_steps: 4
   ent_coef: auto
   target_update_interval: 1
   net_arch: [256, 256]
