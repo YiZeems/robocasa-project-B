@@ -29,7 +29,9 @@ continu). Baseline comparative : **PPO** (on-policy, stable).
 | 2 | SAC v2 | [`open_single_door_sac_v2.yaml`](../configs/train/open_single_door_sac_v2.yaml) | SAC | 900k | 0% — crash ent_coef inévitable | Terminé |
 | 3 | SAC v3 | [`open_single_door_sac_v3.yaml`](../configs/train/open_single_door_sac_v3.yaml) | SAC | 400k | 0% — cold start (porte quasi-fermée) | Terminé |
 | 4 | SAC v3 Curriculum | [`open_single_door_sac_v3_curriculum.yaml`](../configs/train/open_single_door_sac_v3_curriculum.yaml) | SAC | 500k | 0% — buffer sans signal succès | Terminé |
-| 5 | SAC HER | [`open_single_door_sac_her.yaml`](../configs/train/open_single_door_sac_her.yaml) | SAC + HER | en cours | — | En cours |
+| 5 | SAC HER v1 | [`open_single_door_sac_her.yaml`](../configs/train/open_single_door_sac_her.yaml) | SAC + HER | 200k | 0% — cold start (reward sparse pur) | Termine |
+| 6 | SAC HER v2 | [`open_single_door_sac_her_v2.yaml`](../configs/train/open_single_door_sac_her_v2.yaml) | SAC + HER | 300k | 0% — door_max=0.133 rad, hover-hacking | Termine |
+| 7 | SAC HER v3 | [`open_single_door_sac_her_v3.yaml`](../configs/train/open_single_door_sac_her_v3.yaml) | SAC + HER | en cours | — | En cours |
 
 ### Plan initial (non exécuté — révisé)
 
