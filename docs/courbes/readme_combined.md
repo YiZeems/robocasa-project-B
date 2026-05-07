@@ -122,6 +122,34 @@ Pour le détail complet de chaque run (paramètres, diagnostic, fix), voir le [R
 
 ---
 
+## Métrique 6 — Actor loss (train)
+
+![train_actor_loss](combined/combined_train_actor_loss.png)
+
+**Ce que mesure cette métrique :** dans SAC, l'actor loss est défini comme `α × log_prob(a|s) - Q(s,a)`. En pratique, une actor loss **négative et décroissante** signifie que les Q-valeurs estimées augmentent — l'actor apprend que ses actions valent de plus en plus. Une **remontée vers 0 ou en positif** est le signe que le critic donne de mauvais gradients à l'actor (Q-values fausses ou divergentes).
+
+C'est la métrique de go/no-go pour décider si une run mérite d'être continuée.
+
+**Ce qu'on observe :**
+
+- **v1 (rouge) :** actor loss descend jusqu'à -40 puis **remonte vers -10 à -15** après 200k steps. La remontée corrèle exactement avec le crash de α et l'explosion de la critic loss. L'actor reçoit des gradients incorrects du critic divergent.
+
+- **v2 (orange) :** même pattern mais plus sévère — remonte en territoire **positif** (+7) après 200k steps. Un actor loss positif signifie que l'actor est activement anti-corrélé avec les Q-values : il apprend à faire des actions que le critic juge mauvaises. C'est le signe d'un entraînement complètement cassé.
+
+- **v3 (bleu) :** descend jusqu'à -47 et **reste stable** jusqu'à 400k sans remontée significative. Signe d'un entraînement sain — l'actor continue d'améliorer ses Q-values estimées. Confirme que le fix `ent_coef=0.1` fixe a résolu le problème de stabilité.
+
+- **v3 Curriculum (vert) :** similaire à v3, stable autour de -48 à -50. Pas de remontée. L'entraînement est stable même si la porte ne s'ouvre pas.
+
+- **HER v2 (turquoise) :** descend de 0 à -25 sur les premiers 200k steps — apprentissage clair via les goals HER virtuels. Légère remontée à -17 entre 200k et 300k — signal précoce du hover-hacking (l'actor optimise pour rester proche de la poignée, pas pour ouvrir). C'est exactement le moment où `door_angle_max` régresse et `approach_frac` monte.
+
+**Comment utiliser cette courbe pour décider d'arrêter :**
+- Actor loss **décroissante ou stable en négatif** → continuer
+- Actor loss **remonte mais reste négative** → surveiller approach_frac et door_angle_max
+- Actor loss **remonte en positif** → arrêter immédiatement (v2 à 200k)
+- Actor loss **stable négatif mais door_angle_max stagne** → cold start, revoir la config reward (v3 à 200k)
+
+---
+
 ## Synthèse : évolution technique run par run
 
 ```
