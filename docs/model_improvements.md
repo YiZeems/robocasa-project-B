@@ -6,124 +6,210 @@
 
 ## 1. Improvements Directly Linked to Course Concepts
 
-### 1.1 Better Reward Shaping — Ablation Study
+### Summary Table
 
-**Current state:** The 7-component reward was designed by engineering judgment validated on a single 300k debug run.
-
-**Improvement:** Run a systematic ablation — remove or zero out each penalty one at a time and measure the effect on `approach_frac_mean`, `val_success_rate`, and `stagnation_steps_mean`:
-
-```yaml
-# Example ablation configs (create one YAML per ablation)
-# ablation_no_stagnation.yaml
-reward:
-  w_stagnation: 0.0   # remove stagnation penalty
-
-# ablation_no_oscillation.yaml
-reward:
-  w_oscillation: 0.0  # remove oscillation penalty
-
-# ablation_no_gating.yaml  (modify reward.py to always enable approach)
-```
-
-**Course link:** Reward shaping — understanding which components actually prevent reward hacking, vs. which are redundant or even harmful.
-
-**Expected outcome:** identify the 2–3 components that matter most; simplify the reward function.
-
----
-
-### 1.2 Curriculum Learning
-
-**Current state:** The task is presented at full difficulty from the first episode — the door starts fully closed, the robot is placed at a fixed position facing the cabinet.
-
-**Improvement:** Implement a curriculum by varying the initial door angle:
-
-```python
-# Stage 1: door pre-opened at 50%
-initial_theta = 0.5
-
-# Stage 2: door pre-opened at 20%
-initial_theta = 0.2
-
-# Stage 3: full task, door fully closed
-initial_theta = 0.0
-```
-
-This can be implemented in `envs/factory.py` by passing an `initial_door_angle` parameter to the RoboCasa environment initialisation.
-
-**Course link:** Curriculum learning — progressive task difficulty reduces the exploration challenge. The agent accumulates success reward earlier, making credit assignment tractable.
-
-**Expected outcome:** significantly faster convergence (first success in < 100k steps vs. several hundred thousand), higher final success rate.
+| Amélioration | Motivation | Impact attendu | Difficulté | Priorité | Concept cours |
+|---|---|---|---|---|---|
+| Fix `ent_coef` : valeur fixe (v3) | Auto-tuning crash → α→0 → politique déterministe | Apprentissage stable, exploration maintenue | Faible | **Critique (fait)** | Exploration vs exploitation |
+| `use_sde=True` (v3) | Bruit corrélé à l'état → mouvements cohérents vers la poignée | Premier contact plus rapide | Faible | **Haute (fait)** | Exploration structurée |
+| `gradient_steps=4` + `tau=0.01` (v2/v3) | Critic loss spikes à 500k steps → divergence | Stabilité de l'entraînement | Faible | **Critique (fait)** | Actor-critic — stabilité du critic |
+| `eval_freq=100k` + `n_eval_episodes=10` | Validation = 82% du wall time en v1 | Throughput ×3–4 | Faible | **Haute (fait)** | Protocole expérimental |
+| `obj_registries=[lightwheel]` | Reset 9.3s vs 4.8s avec assets légers | Throughput ×1.9 | Faible | **Haute (fait)** | Efficacité computationnelle |
+| `control_freq=20` | Simulation 2× plus lente que nécessaire | Throughput ×2 | Faible | **Haute (fait)** | Simulation physique |
+| Observation normalisation (`VecNormalize`) | Observations brutes sur 220D de scales très différentes | Convergence SAC plus rapide, gradients stables | Faible | Haute | Variance reduction — policy gradient |
+| Curriculum learning (initial door angle) | Tâche pleine difficulté dès le départ → exploration peu efficace | Premier succès < 100k steps | Moyenne | Haute | Curriculum learning |
+| BC pre-training + SAC fine-tuning | Exploration aléatoire gaspille des milliers d'épisodes | Succès non nul dès les premiers épisodes | Moyenne | Haute | Imitation learning |
+| Ablations sur les composantes reward | Impact individuel de chaque composante inconnu | Simplification du reward + compréhension | Faible–Moyenne | Haute | Reward shaping — analyse |
+| Multi-seed (3–5 seeds) | Seed unique → variance inconnue | Conclusions statistiquement valides | Faible (coût compute) | Haute | Robustesse statistique |
+| Comparaison TD3 | Isole la contribution de l'entropie (SAC vs TD3) | Compréhension de l'exploration entropique | Faible | Moyenne | Off-policy actor-critic |
+| Replay buffer inspection | Buffer peut contenir 100% de transitions sans signal | Diagnostic de la qualité du buffer | Faible | Moyenne | Off-policy learning |
+| Critère de succès soutenu | Succès momentané ≠ porte maintenue ouverte | Alignement évaluation / objectif réel | Faible | Moyenne | Protocole d'évaluation |
+| Évaluation sur configs hors distribution | Tâche validée sur les seeds d'entraînement uniquement | Test de généralisation réelle | Moyenne | Moyenne | Généralisation en robotique |
+| Intégration navigation (base mobile) | Base fixe = tâche simplifiée | Tâche complète PandaOmron | Très haute | Basse (post-deadline) | Manipulation + navigation |
+| Sim-to-real transfer | Politique simulée ≠ comportement réel | Déploiement sur vrai robot | Très haute | Basse (post-deadline) | Sim-to-real gap |
 
 ---
 
-### 1.3 Imitation Learning — BC Pre-training + SAC Fine-tuning
+### 1.1 Fix ent_coef : Valeur Fixe (v3) — Critique, Fait
 
-**Current state:** The agent starts from a randomly-initialised policy. The first useful actions (handle contact) are discovered by chance.
+**État actuel :** v1 et v2 ont échoué à cause de l'auto-tuning du coefficient
+d'entropie `α`. SAC pousse systématiquement `α` vers 0 car la `log_prob` de la
+politique (~−20) est structurellement inférieure au `target_entropy` (−12 ou −4).
+Résultat : politique déterministe, actions saturées aux limites, `success_rate = 0%`.
 
-**Improvement:**
+**Amélioration :** `ent_coef=0.1` fixe (v3). Suppression totale de l'auto-tuning.
+`α = 0.1` permanent garantit un signal d'exploration tout au long de l'entraînement.
 
-1. **Collect demonstrations** using RoboCasa's scripted policies or human teleoperation (available in `robocasa/demos/`).
-2. **Behavioral Cloning (BC) pre-training** — train the actor network on `(state, action)` pairs from demonstrations with supervised cross-entropy / MSE loss.
-3. **SAC fine-tuning** — initialise SAC's actor with the BC-trained weights; use RL to correct distribution shift and achieve higher performance than BC alone.
+**Lien cours :** Exploration vs exploitation dans les algorithmes maximum entropy
+(SAC). Le coefficient d'entropie contrôle directement la diversité de la politique.
+Un `α` trop faible rend la politique déterministe prématurément (exploitation sans
+exploration suffisante).
 
-```python
-# Conceptual BC pre-training
-from robocasa.utils import collect_demos
-demos = collect_demos("OpenCabinet", n=50)
-bc_train(actor_network, demos, epochs=100)
-model = SAC.load_pretrained(actor_network, ...)
-model.learn(total_timesteps=3_000_000)
-```
-
-**Course link:** Imitation learning — Behavioral Cloning, covariate shift, and the benefit of combining demonstration pre-training with RL fine-tuning to avoid random exploration.
-
-**Expected outcome:** the agent achieves non-zero success rate from the first evaluation (~step 25k), dramatically reducing wasted compute on random exploration.
+**Impact attendu :** Stabilisation de l'entraînement, `actor_loss` qui reste
+négatif, actions qui n'atteignent pas systématiquement les bornes.
 
 ---
 
-### 1.4 More Controlled Exploration
+### 1.2 State-Dependent Exploration — use_sde=True (v3)
 
-**Current state:** SAC uses automatic entropy tuning (`ent_coef=auto`) which adapts the exploration level automatically. PPO uses a fixed entropy bonus (`ent_coef=0.01`).
+**État actuel :** SAC utilise par défaut un bruit gaussien indépendant à chaque
+step. Sur une tâche de manipulation précise, ce bruit blanc produit des mouvements
+incohérents qui rendent difficile l'établissement de contact avec la poignée.
 
-**Improvement options:**
+**Amélioration :** `use_sde=True` avec `sde_sample_freq=64`. Le bruit est généré
+en fonction de l'état courant et maintenu cohérent pendant 64 steps (~1/8 d'épisode).
+Les mouvements d'exploration sont directionnels plutôt qu'aléatoires.
 
-- **Normalise observations** using `VecNormalize` (SB3 built-in) — observation normalisation significantly improves SAC stability on tasks where different observation dimensions have very different scales (e.g., joint angles in radians vs. distances in meters).
-- **Schedule the entropy coefficient** — start with high entropy (high exploration), decay toward lower entropy as training progresses and the policy becomes more directed.
-- **Add observation noise** during training for robustness.
+**Lien cours :** Exploration structurée vs exploration aléatoire. Le SDE est un
+mécanisme d'exploration adapté aux espaces d'actions continus en manipulation.
 
-```yaml
-# Add to train config
-train:
-  normalize_observations: true
-  ent_coef: "auto_0.1"  # target entropy = -0.1 * action_dim
-```
-
-**Course link:** Exploration vs. exploitation — controlling the exploration schedule is a core RL design choice. The course covers entropy regularisation as a principled exploration mechanism.
+**Impact attendu :** Contact avec la poignée établi plus tôt dans l'entraînement,
+réduction des épisodes entièrement gaspillés en bruit blanc.
 
 ---
 
-### 1.5 Observation Normalisation and Reward Normalisation
+### 1.3 Observation Normalisation (VecNormalize)
 
-**Current state:** Raw observations (joint angles, distances) and raw rewards are fed to the network without normalisation.
+**État actuel :** Les observations brutes (220D) mélangent angles articulaires en
+radians, distances en mètres, et vitesses — sur des échelles très différentes. SAC
+reçoit des gradients d'amplitudes hétérogènes, ce qui ralentit la convergence.
 
-**Improvement:** Use `VecNormalize` from Stable-Baselines3:
+**Amélioration :**
 
 ```python
 from stable_baselines3.common.vec_env import VecNormalize
 env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
 ```
 
-This maintains a running mean and standard deviation for all observation dimensions and scales rewards to have unit variance. Known to improve SAC convergence speed and stability on manipulation tasks.
+`VecNormalize` maintient une moyenne et un écart-type glissants pour chaque
+dimension et normalise rewards à variance unitaire.
 
-**Course link:** Policy gradient variance reduction — normalising observations reduces gradient variance; normalising rewards prevents the critic from being dominated by outlier reward values.
+**Lien cours :** Réduction de la variance en policy gradient. La normalisation
+des observations réduit la variance des gradients du critic et stabilise SAC sur
+des tâches avec observations hétérogènes.
+
+**Impact attendu :** Convergence plus rapide, critic loss plus stable, sensibilité
+réduite au learning rate.
+
+**Difficulté de mise en oeuvre :** Faible — `VecNormalize` est natif SB3. Requiert
+de sauvegarder et charger les statistiques de normalisation avec le checkpoint.
 
 ---
 
-### 1.6 Comparison PPO vs. SAC vs. TD3
+### 1.4 Curriculum Learning
 
-**Current state:** SAC (main) + PPO (baseline) are implemented. No TD3 comparison.
+**État actuel :** La tâche est présentée à pleine difficulté dès le premier épisode —
+porte entièrement fermée, robot en position initiale. Les premiers contacts utiles
+avec la poignée sont découverts par chance.
 
-**Improvement:** Add TD3 (Twin Delayed DDPG) as a third algorithm:
+**Amélioration :** Curriculum en 3 étapes sur l'angle initial de la porte :
+
+```python
+# Étape 1 : porte pré-ouverte à 50%
+initial_theta = 0.50
+
+# Étape 2 : porte pré-ouverte à 20%
+initial_theta = 0.20
+
+# Étape 3 : tâche complète, porte fermée
+initial_theta = 0.00
+```
+
+Implémentation dans `envs/factory.py` en passant `initial_door_angle` à
+l'initialisation de l'environnement RoboCasa.
+
+**Lien cours :** Curriculum learning — la difficulté progressive réduit le défi
+d'exploration. L'agent accumule la reward de succès plus tôt, rendant le credit
+assignment tractable dès le début de l'entraînement.
+
+**Impact attendu :** Premier succès en < 100k steps (vs plusieurs centaines de
+milliers sans curriculum). Taux de succès final plus élevé.
+
+---
+
+### 1.5 Behavioral Cloning Pre-training + SAC Fine-tuning
+
+**État actuel :** La politique démarre avec des poids aléatoires. Le premier
+contact utile avec la poignée est découvert par exploration aléatoire — processus
+très inefficace sur un espace d'action 12D et une cible de 5 cm.
+
+**Amélioration :**
+
+1. **Collecte de démonstrations** via les politiques scriptées RoboCasa ou
+   télé-opération (`robocasa/demos/`).
+2. **Pre-training BC** — entraîner le réseau acteur sur les paires `(état, action)`
+   avec une loss MSE supervisée.
+3. **Fine-tuning SAC** — initialiser SAC avec les poids BC ; le RL corrige le
+   distribution shift et dépasse les performances de BC seul.
+
+```python
+# Schéma conceptuel
+demos = collect_demos("OpenCabinet", n=50)
+bc_train(actor_network, demos, epochs=100)
+model = SAC.load_pretrained(actor_network, ...)
+model.learn(total_timesteps=3_000_000)
+```
+
+**Lien cours :** Imitation learning — Behavioral Cloning, covariate shift, et
+l'intérêt de combiner pre-training par démonstration avec fine-tuning RL pour
+éviter l'exploration aléatoire pure.
+
+**Impact attendu :** Succès non nul dès la première évaluation (~step 25k).
+Réduction drastique du compute gaspillé en exploration aléatoire.
+
+---
+
+### 1.6 Ablations sur les Composantes Reward
+
+**État actuel :** Le reward shaping a 7 composantes. L'impact individuel de
+chaque composante est inconnu.
+
+**Amélioration :** Ablation systématique — supprimer une composante à la fois
+et mesurer l'effet sur `approach_frac_mean`, `val_success_rate`, et
+`stagnation_steps_mean` :
+
+| Ablation | Config | Hypothèse |
+|---|---|---|
+| Sans pénalité stagnation (`w_stagnation=0`) | `reward.w_stagnation: 0.0` | `stagnation_steps_mean` augmente, `success_rate` baisse |
+| Sans gating approche (toujours actif) | Modifier `reward.py` | `approach_frac` augmente, hover hacking réapparaît |
+| Sans high-watermark (`r_progress = θ_t`) | Modifier `reward.py` | `sign_changes_mean` augmente, oscillation profitable |
+| Sans pénalité oscillation (`w_oscillation=0`) | `reward.w_oscillation: 0.0` | `sign_changes_mean` augmente |
+| `gradient_steps=1` vs `gradient_steps=4` vs `gradient_steps=12` | Modifier config | Trade-off sample efficiency vs wall-clock |
+| `n_envs=1` vs `n_envs=6` vs `n_envs=12` | Modifier config | Impact du parallélisme sur la qualité de l'entraînement |
+
+**Lien cours :** Les ablations sont l'outil standard pour comprendre quelles
+composantes d'une méthode contribuent à la performance. Le cours les couvre dans
+le contexte du reward design et de l'analyse d'algorithmes.
+
+---
+
+### 1.7 Multi-Seed Evaluation
+
+**État actuel :** Toutes les expériences utilisent un seed unique (seed=0). Les
+résultats RL sont fortement dépendants du seed.
+
+**Amélioration :**
+
+```bash
+for seed in 0 1 2 3 4; do
+    make train-sac-v3 SEED=$seed
+done
+```
+
+Reporter mean ± std sur les 5 seeds pour `val_success_rate`, `door_angle_final_mean`,
+et `best_validation_step`.
+
+**Lien cours :** Robustesse statistique en RL — le cours souligne que les résultats
+sur un seul seed sont des anecdotes, pas des preuves. Le standard de la littérature
+est 5–10 seeds avec intervalles de confiance.
+
+---
+
+### 1.8 Comparaison TD3
+
+**État actuel :** SAC (principal) + PPO (baseline) implémentés. Pas de TD3.
+
+**Amélioration :** Ajouter TD3 comme troisième algorithme :
 
 ```yaml
 # configs/train/open_single_door_td3.yaml
@@ -138,118 +224,84 @@ train:
   noise_clip: 0.5
 ```
 
-TD3 is also actor-critic off-policy like SAC, but without entropy regularisation. Comparing SAC and TD3 isolates the contribution of entropy maximisation to exploration and performance.
+TD3 est off-policy actor-critic comme SAC, mais sans régularisation entropique.
+Comparer SAC et TD3 isole la contribution de l'entropie à l'exploration.
 
-**Course link:** Off-policy actor-critic methods — understanding the trade-offs between SAC (entropy-augmented), TD3 (deterministic policy + noise), and PPO (on-policy).
-
----
-
-### 1.7 Multi-Seed Evaluation
-
-**Current state:** All experiments use a single seed (seed=0). RL results are highly seed-dependent.
-
-**Improvement:** Run 3–5 seeds per algorithm and report mean ± standard deviation:
-
-```bash
-for seed in 0 1 2 3 4; do
-    make train-sac SEED=$seed
-done
-
-# Plot with confidence intervals
-uv run python scripts/plot_training.py \
-    --run outputs/OpenCabinet_SAC_seed0_*/ \
-          outputs/OpenCabinet_SAC_seed1_*/ \
-          outputs/OpenCabinet_SAC_seed2_*/ \
-    --label "SAC s0" "SAC s1" "SAC s2" \
-    --out outputs/plots/multi_seed/
-```
-
-**Course link:** Statistical robustness in RL — the course emphasises that single-seed results are anecdotes, not evidence. The standard in the RL literature is 5–10 seeds with confidence intervals.
+**Lien cours :** Off-policy actor-critic — comprendre les trade-offs entre SAC
+(politique stochastique + entropie), TD3 (politique déterministe + bruit d'exploration),
+et PPO (on-policy).
 
 ---
 
-### 1.8 Systematic Ablations
+### 1.9 Replay Buffer Inspection
 
-A full ablation study would include:
+**État actuel :** Le replay buffer SAC est sauvegardé en `.pkl` mais jamais analysé.
 
-| Ablation | What it tests |
-|---|---|
-| No stagnation penalty (`w_stagnation=0`) | Effect of stagnation penalty on hover hacking |
-| No oscillation penalty (`w_oscillation=0`) | Effect of oscillation detection |
-| No approach gating (always-on approach) | Effect of gating on late-training behaviour |
-| No high-watermark (use raw Δθ) | Effect of high-watermark on oscillation exploitation |
-| `gradient_steps=1` vs. `gradient_steps=12` | SAC sample efficiency vs. wall-clock speed trade-off |
-| `n_envs=1` vs. `n_envs=6` vs. `n_envs=12` | Effect of parallelism on training quality |
+**Amélioration :** Analyser périodiquement la composition du buffer :
+- Distribution des rewards (la majorité des transitions est-elle à reward ≈ 0 ?)
+- Distribution des `door_angle` dans le buffer (y a-t-il des transitions à θ élevé ?)
+- Taux de succès parmi les transitions bufferisées
 
-**Course link:** Ablation studies are the standard tool for understanding which components of a method contribute to performance. The course covers this in the context of reward design and algorithm analysis.
+Si le buffer ne contient aucune transition avec θ > 0.5, l'agent n'a jamais ouvert
+la porte assez loin pour apprendre le comportement final.
 
----
-
-### 1.9 Replay Buffer Inspection (SAC)
-
-**Current state:** The SAC replay buffer is saved as a `.pkl` file but never analysed.
-
-**Improvement:** Periodically sample from the replay buffer to analyse:
-- Distribution of rewards (are most transitions near-zero reward? This indicates wasted exploration.)
-- Distribution of `door_angle` values in the buffer (are there any high-θ transitions? If not, the agent has never opened the door far enough.)
-- Success rate among buffered transitions (what fraction led to the success bonus?)
-
-This diagnostic reveals whether the replay buffer contains useful learning signal or mostly useless near-zero-reward transitions.
-
-**Course link:** Off-policy learning — the quality of the replay buffer directly determines what the agent can learn. Understanding buffer composition is a key diagnostic tool.
+**Lien cours :** Off-policy learning — la qualité du replay buffer détermine
+directement ce que l'agent peut apprendre. Un buffer composé à 99% de transitions
+à reward ≈ 0 indique une exploration inefficace.
 
 ---
 
-### 1.10 Better Success Condition Definition
+### 1.10 Critère de Succès Soutenu
 
-**Current state:** Success is defined as `θ ≥ 0.90` — the door must be 90% open at some point during the episode.
+**État actuel :** Succès = `θ ≥ 0.90` à n'importe quel step de l'épisode. Un
+agent peut atteindre momentanément le seuil puis relâcher la porte.
 
-**Improvement options:**
+**Améliorations possibles :**
+- **Succès soutenu** : requérir `θ ≥ 0.90` pendant ≥ 10 steps consécutifs.
+- **Succès en état final** : requérir `θ ≥ 0.90` au dernier step de l'épisode.
+- **Succès hors distribution** : évaluer sur des types de placards et positions
+  non vus pendant l'entraînement.
 
-- **Sustained success** — require `θ ≥ 0.90` for ≥ 10 consecutive steps, preventing the agent from momentarily reaching the threshold and then immediately releasing.
-- **End-state success** — require `θ ≥ 0.90` at the final step, not at any intermediate step.
-- **Held-out configuration success** — evaluate on cabinet types and positions not seen during training, testing genuine generalisation.
-
-**Course link:** Evaluation protocol — the definition of "success" affects all reported metrics and conclusions. The course covers the importance of aligning the evaluation criterion with the true task objective.
+**Lien cours :** Protocole d'évaluation — la définition du succès affecte toutes
+les métriques reportées. Le cours couvre l'importance d'aligner le critère
+d'évaluation avec l'objectif réel de la tâche.
 
 ---
 
 ### 1.11 Policy Evaluation on Held-Out Configurations
 
-**Current state:** The validation split uses `seed=10000` and the test split uses `seed=20000`. However, these seeds randomise the scene appearance but not the cabinet type or robot starting position range.
+**État actuel :** Le split test utilise `seed=20000` qui randomise l'apparence de
+la scène, mais pas le type de placard ni la plage de positions initiales.
 
-**Improvement:** Define genuinely held-out evaluation sets:
-- Different cabinet styles (not seen during training)
-- Different distances between robot and cabinet
-- Different lighting conditions
+**Amélioration :** Définir des ensembles d'évaluation réellement hors distribution :
+- Styles de placard différents (non vus pendant l'entraînement)
+- Distances robot-placard différentes
+- Conditions d'éclairage différentes
 
-**Course link:** Generalisation in robot learning — a policy that works only for the exact training distribution is not useful. The course covers the sim-to-real gap and the importance of out-of-distribution evaluation.
-
----
-
-## 2. Summary Table
-
-| Improvement | Difficulty | Impact | Course concept |
-|---|---|---|---|
-| Ablation study on reward | Low | High | Reward shaping analysis |
-| Curriculum learning | Medium | High | Curriculum learning |
-| BC pre-training + SAC fine-tuning | Medium | Very high | Imitation learning |
-| Observation normalisation | Low | Medium | Variance reduction |
-| Multi-seed evaluation | Low (compute cost) | High | Statistical robustness |
-| TD3 comparison | Low | Medium | Off-policy actor-critic |
-| Systematic ablations | Medium | High | Scientific methodology |
-| Replay buffer inspection | Low | Medium | Off-policy learning |
-| Sustained success criterion | Low | Medium | Evaluation protocol |
-| Held-out configuration eval | Medium | High | Generalisation |
-| Navigation integration | Very high | Very high | Full manipulation+navigation |
-| Sim-to-real transfer | Very high | Critical | Robot learning |
+**Lien cours :** Généralisation en robot learning — une politique qui fonctionne
+uniquement pour la distribution d'entraînement n'est pas utile en déploiement.
 
 ---
 
-## 3. Roadmap Priority (Post-Deadline)
+## 2. Roadmap Prioritaire
 
-If this project were to be continued:
+### Court terme (avant ou juste après la deadline)
 
-1. **Short term (1–2 weeks):** Multi-seed evaluation + observation normalisation — high impact, low effort.
-2. **Medium term (1 month):** Ablations on reward components + curriculum learning — would significantly improve the scientific rigor of the results.
-3. **Long term (1 semester):** Imitation learning integration + held-out evaluation — would transform this from a course project into a publishable contribution.
+1. Observation normalisation (`VecNormalize`) — faible effort, impact élevé sur la
+   stabilité de SAC v3.
+2. Analyse du replay buffer en cours de run — diagnostic sur la qualité du buffer
+   v3.
+
+### Moyen terme (1–4 semaines post-deadline)
+
+3. Multi-seed (3–5 seeds) — transforme les résultats anecdotiques en résultats
+   statistiquement valides.
+4. Ablations sur les composantes reward — quantifie l'utilité de chaque composante.
+5. Curriculum learning — amélioration la plus impactante sur le taux de convergence.
+
+### Long terme (1 semestre post-deadline)
+
+6. BC pre-training + SAC fine-tuning — transformerait ce projet de cours en
+   contribution publiable sur l'efficacité d'exploration.
+7. Évaluation sur configurations hors distribution — test de généralisation réelle.
+8. Intégration navigation + base mobile — tâche complète PandaOmron.

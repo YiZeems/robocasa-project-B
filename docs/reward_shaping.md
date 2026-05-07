@@ -1,19 +1,30 @@
 # Reward Shaping — Documentation détaillée
 
-> Implémentation : `robocasa_telecom/envs/reward.py`  
+> Implémentation : `robocasa_telecom/envs/reward.py`
 > Configuration : `configs/env/open_single_door.yaml` (section `reward:`)
 
 ---
 
 ## 1. Motivation
 
-La reward native de RoboCasa pour la tâche `OpenCabinet` est principalement une **reward dense d'approche** complétée par un **bonus sparse de succès**. Ce design simple produit systématiquement du reward hacking en pratique :
+La reward native de RoboCasa pour la tâche `OpenCabinet` est principalement une
+**reward dense d'approche** complétée par un **bonus sparse de succès**. Ce design
+simple produit systématiquement du reward hacking en pratique :
 
-> L'agent apprend à rester immobile devant la poignée de porte (à ~5 cm) et accumule la reward d'approche sans jamais ouvrir la porte. Taux de succès : 0 %. Reward cumulative : 200–400.
+> L'agent apprend à rester immobile devant la poignée de porte (à ~5 cm) et
+> accumule la reward d'approche sans jamais ouvrir la porte.
+> Taux de succès : 0 %. Reward cumulative : 200–400.
 
-Ce phénomène est connu sous le nom de **hover hacking** ou **approach reward gaming**. Il est particulièrement fréquent sur les tâches de manipulation où :
+Ce phénomène est connu sous le nom de **hover hacking** ou **approach reward
+gaming**. Il est particulièrement fréquent sur les tâches de manipulation où :
+
 - La reward d'approche est dense (signal à chaque step)
 - Le bonus de succès est rare et difficile à atteindre au début
+
+**Lien cours :** Reward shaping (Ng et al., 1999) — le façonnage de récompense
+peut introduire un biais si les composantes ajoutées ne préservent pas l'invariance
+par potential shaping. Le défi est de guider l'exploration sans créer de
+comportements parasites exploitables.
 
 ---
 
@@ -22,7 +33,7 @@ Ce phénomène est connu sous le nom de **hover hacking** ou **approach reward g
 | Problème | Mécanisme | Symptôme observable |
 |---|---|---|
 | **Hover hacking** | Reward d'approche sans condition de progression | `approach_frac > 0.5`, `success_rate ≈ 0` |
-| **Oscillation** | Aller-retour sur la porte ≈ reward de progression nette | `sign_changes_mean` élevé |
+| **Oscillation** | Aller-retour sur la porte = reward de progression nette | `sign_changes_mean` élevé |
 | **Stagnation** | Rester près de la poignée sans agir | `stagnation_steps_mean` élevé |
 | **Actions parasites** | Actions fortes récompensées si elles ouvrent légèrement | `action_magnitude_mean` élevé |
 | **Wrong direction** | Refermer légèrement la porte ne coûte rien | `door_angle_delta` oscillant |
@@ -44,34 +55,43 @@ R_t = w_approach    × r_approach(d_t, θ_t)
 ### Définitions des composantes
 
 **r_approach(d, θ) :**
+
 ```
 r_approach = clip(1 - d / d_max, 0, 1)   si θ < θ_success
            = 0                             si θ ≥ θ_success
 ```
+
 Guide le robot vers la poignée. Désactivé une fois la porte ouverte (gating).
 
 **r_progress(θ) :**
+
 ```
 δ = max(0, θ - θ_best)
 r_progress = δ / θ_success
 θ_best ← max(θ_best, θ)   [high-watermark]
 ```
+
 Signal principal. Ne vaut > 0 que si l'agent bat son propre record d'ouverture.
 
 **r_success(θ) :**
+
 ```
 r_success = 1   si θ ≥ θ_success = 0.90
           = 0   sinon
 ```
+
 Bonus sparse dominant. Reçu à chaque step où la porte est ouverte ≥ 90 %.
 
 **r_action_reg(a) :**
+
 ```
 r_action_reg = -‖a‖²   (norme L2 au carré)
 ```
+
 Pénalise les actions fortes et saccadées.
 
 **r_stagnation(d, ctr) — conditionnel :**
+
 ```
 r_stagnation = -1   si d < d_prox ET ctr ≥ stagnation_n
              = 0    sinon
@@ -79,13 +99,16 @@ ctr s'incrémente quand θ ne progresse pas ; se reset quand θ progresse.
 ```
 
 **r_wrong_dir(θ) :**
+
 ```
 r_wrong_dir = -(θ_best - θ)   si θ < θ_best - tol_wrong_dir
             = 0                sinon
 ```
+
 Pénalise le recul de la porte par rapport au meilleur angle atteint.
 
 **r_oscillation(Δθ_window) :**
+
 ```
 sign_changes = nombre de fois où signe(Δθ_i) ≠ signe(Δθ_{i-1}) sur la fenêtre
 r_oscillation = -sign_changes / oscillation_window
@@ -104,14 +127,14 @@ r_oscillation = 0 sinon
 | `w_success` | 5.0 | Poids bonus succès | — | Agent ignore la tâche |
 | `w_action_reg` | 0.01 | Poids régularisation action | Actions trop timides | Jerk excessif |
 | `w_stagnation` | 0.05 | Poids pénalité stagnation | Over-exploration | Stagnation non pénalisée |
-| `w_wrong_dir` | 0.3 | Poids pénalité recul | Politique trop prudente | Porte repoussée librement |
+| `w_wrong_dir` | 0.3 | Poids pénalité recul | Politique trop prudente (v3 : potentiellement trop punitif tôt) | Porte repoussée librement |
 | `w_oscillation` | 0.2 | Poids pénalité oscillation | Politique figée | Oscillation non corrigée |
 | `theta_success` | 0.90 | Seuil de succès normalisé | — | Tâche trop facile/difficile |
 | `d_max` | 0.5 m | Portée max reward approche | — | — |
-| `d_prox` | 0.12 m | Seuil "proche de la poignée" | FP stagnation | Pénalité trop tardive |
-| `stagnation_n` | 50 | Steps avant déclenchement stagnation | FP fréquents | Hover hacking long |
+| `d_prox` | 0.12 m | Seuil "proche de la poignée" | Faux positifs stagnation | Pénalité trop tardive |
+| `stagnation_n` | 50 | Steps avant déclenchement stagnation | Faux positifs fréquents | Hover hacking long |
 | `tol_wrong_dir` | 0.02 | Tolérance avant pénalité recul | — | — |
-| `oscillation_window` | 20 | Fenêtre de détection oscillation | Détection lente | FP sur micro-oscillations |
+| `oscillation_window` | 20 | Fenêtre de détection oscillation | Détection lente | Faux positifs sur micro-oscillations |
 | `oscillation_threshold` | 4 | Changements de signe min pour déclencher | Faux positifs | Oscillation non détectée |
 
 ---
@@ -125,27 +148,75 @@ R_max_approche = w_approach × 1.0 × 500 steps = 0.05 × 500 = 25
 R_max_success  = w_success  × 1.0 × 500 steps = 5.0 × 500 = 2500
 ```
 
-Le bonus de succès est **100× plus rentable** que la reward d'approche maximale. L'agent a toujours intérêt à terminer la tâche plutôt qu'à stagner.
+Le bonus de succès est **100× plus rentable** que la reward d'approche maximale.
+L'agent a toujours intérêt à terminer la tâche plutôt qu'à stagner devant la poignée.
 
 ### 5.2 Impossibilité d'osciller pour du profit
 
-Avec le high-watermark : `r_progress(θ) = max(0, θ - θ_best)`. Si l'agent oscille la porte entre 0.3 et 0.4, il ne reçoit de reward de progression **que la première fois** qu'il atteint 0.4. Les aller-retours suivants donnent 0. De plus, si l'oscillation est détectée par la fenêtre glissante, une pénalité supplémentaire s'applique.
+Avec le high-watermark : `r_progress(θ) = max(0, θ - θ_best)`. Si l'agent oscille
+la porte entre 0.3 et 0.4, il ne reçoit de reward de progression **que la première
+fois** qu'il atteint 0.4. Les aller-retours suivants donnent 0. De plus, si
+l'oscillation est détectée par la fenêtre glissante, une pénalité supplémentaire
+s'applique.
 
 ### 5.3 Conditionnalité de la stagnation
 
-La pénalité de stagnation ne s'active que si **les deux conditions sont vraies simultanément** :
+La pénalité de stagnation ne s'active que si **les deux conditions sont vraies
+simultanément** :
+
 - `d_ee_handle < 0.12 m` (robot déjà proche de la poignée)
 - `ctr >= 50 steps` (sans progression récente)
 
-Cela évite de pénaliser le robot lors de la phase d'exploration initiale où il cherche encore la poignée depuis loin.
+Cela évite de pénaliser le robot lors de la phase d'exploration initiale où il
+cherche encore la poignée depuis loin.
 
 ### 5.4 Approche gated
 
-La reward d'approche est **nulle dès que la porte est ouverte** (θ ≥ 0.90). L'agent ne peut pas augmenter la reward d'approche en continuant à s'agiter devant une porte déjà ouverte.
+La reward d'approche est **nulle dès que la porte est ouverte** (θ ≥ 0.90). L'agent
+ne peut pas augmenter la reward d'approche en continuant à s'agiter devant une porte
+déjà ouverte.
 
 ---
 
-## 6. Table récapitulative pour le rapport
+## 6. Problèmes observés en pratique
+
+### 6.1 Hover hacking — observé sur le run debug
+
+**Symptômes :** `return_mean ≈ 200–400`, `val_success_rate = 0%`,
+`approach_frac > 0.7`. L'agent parque l'effecteur à ~5 cm de la poignée et reste
+immobile.
+
+**Cause :** Le signal de reward d'approche est dense et facilement exploitable.
+Le bonus de succès est trop rare pour être découvert pendant l'exploration initiale.
+
+**Fix appliqué :** High-watermark progress + gating approche + pénalité stagnation
+(50 steps) + dominance du bonus succès (100×). Ces quatre mécanismes combinés ont
+éliminé le hover hacking sur le run debug.
+
+### 6.2 Politique trop contrainte par w_wrong_dir (risque v3)
+
+**Problème potentiel :** `w_wrong_dir=0.3` pénalise tout recul de la porte par
+rapport au meilleur angle atteint. Tôt dans l'entraînement, quand l'agent n'a
+jamais ouvert la porte au-delà de 0.05 rad, un petit recul de 0.02 rad suffit à
+déclencher la pénalité. Cela peut inhiber les mouvements d'exploration nécessaires
+pour trouver le contact correct.
+
+**Mitigation :** Surveiller `val_door_angle_max_mean` sur les premières 200k steps
+de v3. Si < 0.1, réduire `w_wrong_dir` à 0.1 et augmenter `tol_wrong_dir` à 0.05.
+
+### 6.3 oscillation_frac négatif dans MLflow
+
+**Bug détecté :** La fraction `oscillation_frac` apparaissait négative dans les
+courbes MLflow.
+
+**Cause :** La pénalité d'oscillation est une reward négative. Divisée par
+`abs(total_mean)` sans `abs()` au numérateur, la fraction devenait négative.
+
+**Fix :** `abs()` appliqué au numérateur. Statut : résolu.
+
+---
+
+## 7. Table récapitulative pour le rapport
 
 | Composante | Description | Coefficient | Risque évité | Métrique de vérification |
 |---|---|---:|---|---|
@@ -159,7 +230,7 @@ La reward d'approche est **nulle dès que la porte est ouverte** (θ ≥ 0.90). 
 
 ---
 
-## 7. Métriques de vérification (MLflow)
+## 8. Métriques de vérification (MLflow)
 
 Loggées dans `train/reward_hack/*` et `validation/*` :
 
@@ -170,14 +241,42 @@ Loggées dans `train/reward_hack/*` et `validation/*` :
 | `train/reward_hack/oscillation_steps_mean` | Steps oscillants par épisode | > 50 |
 | `train/reward_hack/sign_changes_mean` | Changements de signe Δθ | > 15 |
 | `val_approach_frac_mean` | Même signal sur validation | > 0.5 |
-| `val_door_angle_max_mean` | Best door angle par épisode | < 0.3 (bloqué) |
+| `val_door_angle_max_mean` | Best door angle par épisode | < 0.3 (agent bloqué) |
 | `reward_without_success` | Return moyen des épisodes en échec | Élevé + succès nul |
 
 ---
 
-## 8. Ablations recommandées
+## 9. Exemples de logs attendus
 
-Pour un rapport plus rigoureux, les ablations suivantes permettent de quantifier l'impact de chaque composante :
+### Comportement sain (pas de reward hacking)
+
+```
+validation — step 500000:
+  val_success_rate          = 0.54
+  val_approach_frac_mean    = 0.18   ← faible (pas de hover hacking)
+  val_stagnation_steps_mean = 12.3   ← faible
+  val_sign_changes_mean     = 3.1    ← faible (pas d'oscillation)
+  val_door_angle_max_mean   = 0.87   ← haut (robot approche de la solution)
+```
+
+### Comportement de hover hacking (à corriger)
+
+```
+validation — step 100000:
+  val_success_rate          = 0.00
+  val_approach_frac_mean    = 0.72   ← ALERTE hover hacking
+  val_stagnation_steps_mean = 187    ← ALERTE blocage chronique
+  val_sign_changes_mean     = 2.1
+  val_door_angle_max_mean   = 0.12   ← robot à peine sorti
+  reward_without_success    = 185.3  ← reward haute sans succès
+```
+
+---
+
+## 10. Ablations recommandées
+
+Pour un rapport plus rigoureux, les ablations suivantes permettent de quantifier
+l'impact de chaque composante :
 
 | Ablation | Config | Hypothèse |
 |---|---|---|
@@ -188,36 +287,11 @@ Pour un rapport plus rigoureux, les ablations suivantes permettent de quantifier
 
 ---
 
-## 9. Exemples de logs attendus
+## 11. Modifier la reward
 
-### Comportement sain (pas de reward hacking)
-
-```
-validation — step 500000:
-  val_success_rate        = 0.54
-  val_approach_frac_mean  = 0.18   ← faible (pas de hover hacking)
-  val_stagnation_steps_mean = 12.3  ← faible
-  val_sign_changes_mean   = 3.1    ← faible (pas d'oscillation)
-  val_door_angle_max_mean = 0.87   ← haut (robot approche de la solution)
-```
-
-### Comportement de hover hacking (à corriger)
-
-```
-validation — step 100000:
-  val_success_rate        = 0.00
-  val_approach_frac_mean  = 0.72   ← ALERTE hover hacking
-  val_stagnation_steps_mean = 187   ← ALERTE blocage chronique
-  val_sign_changes_mean   = 2.1
-  val_door_angle_max_mean = 0.12   ← robot à peine sorti
-  reward_without_success  = 185.3  ← reward haute sans succès
-```
-
----
-
-## 10. Modifier la reward
-
-Tous les coefficients sont exposés dans `configs/env/open_single_door.yaml` sous la clé `reward:` et rechargés automatiquement par `EnvConfig`. Aucune modification du code Python n'est nécessaire pour changer les coefficients.
+Tous les coefficients sont exposés dans `configs/env/open_single_door.yaml` sous
+la clé `reward:` et rechargés automatiquement par `EnvConfig`. Aucune modification
+du code Python n'est nécessaire pour changer les coefficients.
 
 ```yaml
 reward:
@@ -236,3 +310,28 @@ reward:
   oscillation_window: 20
   oscillation_threshold: 4
 ```
+
+---
+
+## 12. Lien cours — MDP et reward shaping
+
+La tâche est modélisée comme un **MDP** (Markov Decision Process) :
+
+- **S** : vecteur d'observation 220D (positions articulaires, vitesses, distance
+  EEF-poignée, angle de porte, pose de l'effecteur)
+- **A** : espace d'action 12D continu, contrôle OSC (Operational Space Control)
+- **R** : reward shapée R_t décrite ci-dessus
+- **γ** : facteur de discount = 0.99 (horizon effectif ~100 steps)
+- **T** : épisode de 500 steps maximum
+
+La reward shapée R_t est une **transformation de la reward originale** (sparse
+bonus succès uniquement). Elle vise à résoudre le problème de **credit assignment**
+sur des épisodes de 500 steps : sans signal dense, le gradient de la politique
+ne peut pas attribuer la récompense aux actions initiales (approche de la poignée)
+qui conditionnent le succès final.
+
+Le risque théorique (Ng et al., 1999) est que les composantes non-potential
+(stagnation, wrong_dir, oscillation) modifient la politique optimale du MDP. Ce
+risque est mitigé en pratique par la dominance écrasante du bonus de succès (100×
+la reward d'approche), qui garantit que la politique optimale reste "ouvrir la porte"
+plutôt que "éviter les pénalités".
