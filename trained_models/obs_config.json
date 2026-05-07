@@ -1,0 +1,122 @@
+{
+  "obs_keys": [
+    "distr_counter_1_pos",
+    "distr_counter_1_quat",
+    "distr_counter_1_to_robot0_eef_pos",
+    "distr_counter_1_to_robot0_eef_quat",
+    "distr_counter_2_pos",
+    "distr_counter_2_quat",
+    "distr_counter_2_to_robot0_eef_pos",
+    "distr_counter_2_to_robot0_eef_quat",
+    "door_obj_pos",
+    "door_obj_quat",
+    "door_obj_to_robot0_eef_pos",
+    "door_obj_to_robot0_eef_quat",
+    "object-state",
+    "robot0_base_pos",
+    "robot0_base_quat",
+    "robot0_base_to_eef_pos",
+    "robot0_base_to_eef_quat",
+    "robot0_base_to_eef_quat_site",
+    "robot0_eef_pos",
+    "robot0_eef_quat",
+    "robot0_eef_quat_site",
+    "robot0_gripper_qpos",
+    "robot0_gripper_qvel",
+    "robot0_joint_acc",
+    "robot0_joint_pos",
+    "robot0_joint_pos_cos",
+    "robot0_joint_pos_sin",
+    "robot0_joint_vel",
+    "robot0_proprio-state"
+  ],
+  "obs_shapes": {
+    "distr_counter_1_pos": [
+      3
+    ],
+    "distr_counter_1_quat": [
+      4
+    ],
+    "distr_counter_1_to_robot0_eef_pos": [
+      3
+    ],
+    "distr_counter_1_to_robot0_eef_quat": [
+      4
+    ],
+    "distr_counter_2_pos": [
+      3
+    ],
+    "distr_counter_2_quat": [
+      4
+    ],
+    "distr_counter_2_to_robot0_eef_pos": [
+      3
+    ],
+    "distr_counter_2_to_robot0_eef_quat": [
+      4
+    ],
+    "door_obj_pos": [
+      3
+    ],
+    "door_obj_quat": [
+      4
+    ],
+    "door_obj_to_robot0_eef_pos": [
+      3
+    ],
+    "door_obj_to_robot0_eef_quat": [
+      4
+    ],
+    "object-state": [
+      42
+    ],
+    "robot0_base_pos": [
+      3
+    ],
+    "robot0_base_quat": [
+      4
+    ],
+    "robot0_base_to_eef_pos": [
+      3
+    ],
+    "robot0_base_to_eef_quat": [
+      4
+    ],
+    "robot0_base_to_eef_quat_site": [
+      4
+    ],
+    "robot0_eef_pos": [
+      3
+    ],
+    "robot0_eef_quat": [
+      4
+    ],
+    "robot0_eef_quat_site": [
+      4
+    ],
+    "robot0_gripper_qpos": [
+      2
+    ],
+    "robot0_gripper_qvel": [
+      2
+    ],
+    "robot0_joint_acc": [
+      7
+    ],
+    "robot0_joint_pos": [
+      7
+    ],
+    "robot0_joint_pos_cos": [
+      7
+    ],
+    "robot0_joint_pos_sin": [
+      7
+    ],
+    "robot0_joint_vel": [
+      7
+    ],
+    "robot0_proprio-state": [
+      68
+    ]
+  }
+}
