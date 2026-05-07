@@ -67,9 +67,10 @@ train:
 
 eval:
   eval_freq: 100000
-  # 20 épisodes de validation au lieu de 5 → intervalle de confiance
-  # beaucoup plus serré, moins de faux positifs/négatifs sur le best model.
-  n_eval_episodes: 20
+  # 10 épisodes de validation (compromis : 2x plus précis que 5,
+  # 2x plus rapide que 20). Avec 1 env séquentiel à ~18 steps/sec :
+  # 10 × 500 / 18 = ~278s par eval, 30 evals = ~2.3h de validation total.
+  n_eval_episodes: 10
   validation_seed: 10000
   test_seed: 20000
   early_stopping_patience: 20
