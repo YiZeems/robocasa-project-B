@@ -1,0 +1,69 @@
+project:
+  name: robocasa_telecom
+  task: OpenCabinet
+
+paths:
+  output_root: outputs
+  checkpoint_root: checkpoints
+  tensorboard_root: logs/tensorboard
+
+env:
+  config_path: configs/env/open_single_door.yaml
+
+train:
+  algorithm: SAC
+  policy: MlpPolicy
+  total_timesteps: 3000000
+
+  # --- Learning rate ---
+  learning_rate: 3.0e-4
+  lr_schedule: cosine
+  lr_min: 1.0e-5
+
+  # --- Replay buffer ---
+  buffer_size: 1000000
+  batch_size: 512
+  learning_starts: 10000
+
+  # --- SAC core ---
+  tau: 0.01
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 4
+  target_update_interval: 1
+
+  # --- Entropie (CORRECTION PRINCIPALE v3) ---
+  # v1 + v2 : l'auto-tuning de α échoue car la log_prob de la politique
+  # (~-20) est toujours < target_entropy (-4 ou -12), donc SAC pousse
+  # systématiquement α vers 0 avant que la politique ait le temps d'apprendre.
+  #
+  # Fix v3 : ent_coef FIXE à 0.1, pas d'auto-tuning.
+  # α = 0.1 permanent → l'acteur a toujours un signal d'exploration,
+  # les actions ne saturent pas aux limites, la politique peut apprendre.
+  # Inconvénient : pas d'adaptation au cours du run, mais stable.
+  ent_coef: 0.1
+
+  # --- Exploration structurée (SDE) ---
+  # State-Dependent Exploration : au lieu d'un bruit Gaussien indépendant
+  # à chaque step, SDE génère un bruit corrélé à l'état courant.
+  # Résultat : mouvements cohérents vers la poignée plutôt que bruit blanc.
+  # Particulièrement efficace pour les tâches de manipulation précise.
+  use_sde: true
+  sde_sample_freq: 64   # régénère le bruit toutes les 64 steps (1 épisode ≈ 500 steps)
+
+  # --- Réseau ---
+  net_arch: [400, 300]
+
+  n_envs: 12
+  seed: 0
+  save_freq_steps: 100000
+  eval_episodes: 5
+  device: auto
+
+eval:
+  eval_freq: 100000
+  n_eval_episodes: 10
+  validation_seed: 10000
+  test_seed: 20000
+  early_stopping_patience: 20
+  deterministic: true

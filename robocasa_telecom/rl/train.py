@@ -429,6 +429,8 @@ def _build_sac(
         ent_coef=ent_coef,
         target_update_interval=int(train_cfg.get("target_update_interval", 1)),
         target_entropy=train_cfg.get("target_entropy", "auto"),
+        use_sde=bool(train_cfg.get("use_sde", False)),
+        sde_sample_freq=int(train_cfg.get("sde_sample_freq", -1)),
         tensorboard_log=None,
         policy_kwargs=policy_kwargs or None,
         seed=seed,
