@@ -1,0 +1,49 @@
+env:
+  task: OpenCabinet
+  robots: PandaOmron
+  controller: null
+  use_gym_wrapper: false
+  horizon: 500
+  control_freq: 20
+
+  reward_shaping: true
+  use_object_obs: true
+  use_camera_obs: false
+
+  has_renderer: false
+  has_offscreen_renderer: false
+  render_camera: robot0_agentview_center
+  camera_names:
+    - robot0_agentview_center
+  camera_height: 128
+  camera_width: 128
+  obj_registries:
+    - lightwheel
+
+  ignore_done: false
+
+  robot_spawn_deviation_pos_x: 0.05
+  robot_spawn_deviation_pos_y: 0.02
+
+  use_her: true
+
+reward:
+  # w_approach removed: it was causing hover-hacking (agent stays near handle
+  # for approach reward without pushing). Progress + success are the only
+  # positive signals now, so the agent MUST open the door to earn reward.
+  w_approach: 0.0
+  w_progress: 2.0       # increased: door opening is the primary signal
+  w_success: 3.0        # per-step bonus when door >= theta_success (sustain reward)
+  w_action_reg: 0.005   # reduced: allow stronger pushes
+  w_stagnation: 0.05    # penalise hovering near door without progress
+  w_wrong_dir: 0.03
+  w_oscillation: 0.01
+
+  theta_success: 0.08   # slightly lower: easier HER goals, faster first signal
+
+  d_max: 0.6
+  d_prox: 0.12
+  stagnation_n: 30      # tighter: penalise stagnation sooner (was 50)
+  tol_wrong_dir: 0.02
+  oscillation_window: 20
+  oscillation_threshold: 4
