@@ -29,7 +29,7 @@ import pandas as pd
 RUNS = [
     {
         "key": "run_sac_v1",
-        "run_id": "3518295f61e84b49",
+        "run_id": "256b90f5b48448968dcbfd08ee8a8655",
         "output_dir": "outputs/OpenCabinet_SAC_seed0_20260506_201751",
         "label": "SAC v1 — ent_coef=auto",
         "color": "#e05c5c",
@@ -61,7 +61,7 @@ RUNS = [
     },
     {
         "key": "run_sac_her_v2",
-        "run_id": "94ad73ca2b1f48ee",
+        "run_id": "94ad73ca2b1f48ee95e187833109085f",
         "output_dir": "outputs/OpenCabinet_SAC_seed0_20260507_174253",
         "label": "SAC HER v2 — hybride",
         "color": "#1abc9c",
