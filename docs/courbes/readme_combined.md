@@ -132,9 +132,9 @@ C'est la métrique de go/no-go pour décider si une run mérite d'être continu�
 
 **Ce qu'on observe :**
 
-- **v1 (rouge) :** actor loss descend jusqu'à -40 puis **remonte vers -10 à -15** après 200k steps. La remontée corrèle exactement avec le crash de α et l'explosion de la critic loss. L'actor reçoit des gradients incorrects du critic divergent.
+- **v1 (rouge) :** actor loss descend à **-80** rapidement (exploration forte au début), puis remonte de façon monotone et **dépasse 0 vers 250k steps** pour atteindre **+7** à 400k. Un actor loss positif signifie que l'actor est activement anti-corrélé avec les Q-values : il apprend à faire des actions que le critic juge mauvaises. C'est le signe d'un entraînement complètement cassé. Cause directe : crash de α → Q-values divergentes → gradients incorrects.
 
-- **v2 (orange) :** même pattern mais plus sévère — remonte en territoire **positif** (+7) après 200k steps. Un actor loss positif signifie que l'actor est activement anti-corrélé avec les Q-values : il apprend à faire des actions que le critic juge mauvaises. C'est le signe d'un entraînement complètement cassé.
+- **v2 (orange) :** même trajectoire — descend à **-80** vers 40k steps, puis remonte vers **-15 à 400k** (et atteint +7.2 au final à 900k, confirmant la même divergence). Le fix `auto_0.1` retarde légèrement la divergence mais ne la résout pas.
 
 - **v3 (bleu) :** descend jusqu'à -47 et **reste stable** jusqu'à 400k sans remontée significative. Signe d'un entraînement sain — l'actor continue d'améliorer ses Q-values estimées. Confirme que le fix `ent_coef=0.1` fixe a résolu le problème de stabilité.
 
