@@ -111,6 +111,13 @@ METRICS = [
         "Fraction",
         "combined_val_approach_frac.png",
     ),
+    (
+        "train/actor_loss",
+        True,
+        "Actor loss (train)\n— décroissant = Q-values croissantes ; remontée positive = divergence",
+        "Loss",
+        "combined_train_actor_loss.png",
+    ),
 ]
 
 
