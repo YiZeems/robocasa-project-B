@@ -30,15 +30,15 @@ tensorboard:
 	uv run tensorboard --logdir logs/tensorboard
 
 train:
-	uv run python -m robocasa_telecom.train --config $(CONFIG) --seed $(SEED)
+	uv run python -m robocasa_telecom.train --config $(CONFIG) --seed $(SEED) --no-auto-resume
 
 train-sac-debug:
 	uv run python -m robocasa_telecom.train \
-	  --config configs/train/open_single_door_sac_debug.yaml --seed $(SEED) $(EXTRA)
+	  --config configs/train/open_single_door_sac_debug.yaml --seed $(SEED) --no-auto-resume $(EXTRA)
 
 train-sac:
 	uv run python -m robocasa_telecom.train \
-	  --config configs/train/open_single_door_sac.yaml --seed $(SEED) $(EXTRA)
+	  --config configs/train/open_single_door_sac.yaml --seed $(SEED) --no-auto-resume $(EXTRA)
 
 train-sac-v2:
 	uv run python -m robocasa_telecom.train \
@@ -50,11 +50,11 @@ train-sac-v3:
 
 train-sac-tuned:
 	uv run python -m robocasa_telecom.train \
-	  --config configs/train/open_single_door_sac_tuned.yaml --seed $(SEED)
+	  --config configs/train/open_single_door_sac_tuned.yaml --seed $(SEED) --no-auto-resume
 
 train-ppo-baseline:
 	uv run python -m robocasa_telecom.train \
-	  --config configs/train/open_single_door_ppo_baseline.yaml --seed $(SEED)
+	  --config configs/train/open_single_door_ppo_baseline.yaml --seed $(SEED) --no-auto-resume
 
 eval:
 	uv run python -m robocasa_telecom.evaluate \
