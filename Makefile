@@ -11,7 +11,7 @@ VIDEO_FPS ?= 20
 
 .PHONY: setup sanity check tensorboard \
         train train-sac-debug train-sac train-sac-tuned train-ppo-baseline \
-        train-sac-her \
+        train-sac-her train-sac-her-v2 \
         eval eval-validation eval-test \
         eval-video \
         render-best-run plot \
@@ -56,6 +56,10 @@ train-sac-v3-curriculum:
 train-sac-her:
 	uv run python -m robocasa_telecom.train \
 	  --config configs/train/open_single_door_sac_her.yaml --seed $(SEED) --no-auto-resume $(EXTRA)
+
+train-sac-her-v2:
+	uv run python -m robocasa_telecom.train \
+	  --config configs/train/open_single_door_sac_her_v2.yaml --seed $(SEED) --no-auto-resume $(EXTRA)
 
 train-sac-tuned:
 	uv run python -m robocasa_telecom.train \
