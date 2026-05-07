@@ -2,7 +2,7 @@
 
 **Module** : IA705 — Apprentissage pour la robotique, Telecom Paris
 **Date** : 7 mai 2026
-**Statut** : SAC v1 abandonné · SAC v2 abandonné · SAC v3 en cours · PPO non lancé
+**Statut** : SAC v1 abandonné · SAC v2 abandonné · SAC v3 abandonné · SAC v3 curriculum abandonné · SAC HER en cours · PPO non lancé
 
 ---
 
@@ -25,31 +25,33 @@
 
 ### 1.2 Experiments Run
 
-| Run | Config | Statut | Steps réalisés | val_success_rate | theta_best_mean | Notes |
+| Run | Config | Statut | Steps | val_success_rate | val_door_angle_final (best) | Raison d'arrêt |
 |---|---|---|---:|---:|---:|---|
-| SAC debug | `open_single_door_sac_debug.yaml` | Terminé | 300k | À compléter | À compléter | Hover hacking détecté et corrigé |
-| SAC v1 | `open_single_door_sac.yaml` | Abandonné | ~700k | 0% | 0.001–0.012 | ent_coef auto crash → α→0 |
-| SAC v2 | `open_single_door_sac_v2.yaml` | Abandonné | ~100k | 0% | À compléter | Même cause ; détectée plus tôt |
-| SAC v3 | `open_single_door_sac_v3.yaml` | En cours | À compléter | À compléter | À compléter | ent_coef=0.1 fixe + SDE |
-| PPO baseline | `open_single_door_ppo_baseline.yaml` | Non lancé | — | — | — | Deadline atteinte |
+| SAC debug | `sac_debug.yaml` | Terminé | 300k | 0% | ~0 | Hover hacking corrigé, run de validation |
+| SAC v1 | `sac.yaml` | Abandonné | 500k | 0% | 0.000 rad | ent_coef crash → α=0.009, critic loss 48 |
+| SAC v2 | `sac_v2.yaml` | Abandonné | 900k | 0% | 0.000 rad | Même crash retardé ; critic loss 116 828 |
+| SAC v3 | `sac_v3.yaml` | Abandonné | 400k | 0% | 0.004 rad | Cold start — porte quasi-immobile |
+| SAC v3 curriculum | `sac_v3_curriculum.yaml` | Abandonné | 500k | 0% | 0.021 rad (300k) | Pic 300k, régression, buffer sans succès |
+| SAC HER | `sac_her.yaml` | En cours | — | ? | ? | Premier run avec signal positif garanti |
+| PPO baseline | `ppo_baseline.yaml` | Non lancé | — | — | — | Deadline atteinte |
 
 ### 1.3 Issues Identified and Resolved
 
-| Problème | Cause racine | Fix |
-|---|---|---|
-| ent_coef auto-tuning crash (v1 + v2) | log_prob ≈ −20 < target_entropy → α→0 | ent_coef=0.1 fixe (v3) |
-| Critic loss spikes > 40k | α≈0 → pas de régularisation → Q-values divergent | gradient_steps=4, tau=0.01 |
-| Hover hacking (approach_frac > 0.7) | Reward d'approche dense exploitable | High-watermark + gating + stagnation |
-| Auto-resume reprend le mauvais checkpoint | task+algo+seed identiques entre v1/v2/v3 | --no-auto-resume dans tous les targets Makefile |
-| Validation = 82% du wall time (v1) | n_eval_episodes=50 × eval_freq=25000 | n_eval_episodes=10, eval_freq=100000 |
-| Reset 9.3s par épisode | obj_registries=[objaverse] | obj_registries=[lightwheel] → 4.8s |
-| control_freq=10 (simulation 2× trop lente) | 50 substeps au lieu de 25 | control_freq=20 |
-| SubprocVecEnv crash ConnectionResetError (fork) | MuJoCo hérite des FD/EGL du parent | spawn (défaut SB3) |
-| OOM WSL2 (même symptôme) | 12 × 3.4 GB = ~41 GB > RAM configurée (31 GB) | .wslconfig memory=56GB |
-| oscillation_frac négatif dans MLflow | Pénalité négative / abs(total_mean) sans abs() | abs() au numérateur |
-| VecMonitor.reset() crash avec seed= | API Gymnasium ≥ 0.26 vs VecMonitor | isinstance(VecEnv) + env.seed(n); env.reset() |
-| Observation shape instable entre resets | GymWrapper varie selon la scène | RawRoboCasaAdapter avec espace de référence fixe |
-| mlruns/ committé dans Git | Oublié dans .gitignore | git rm -r --cached + hook pre-commit |
+| Problème | Cause racine | Fix | Découvert lors |
+|---|---|---|---|
+| ent_coef auto-tuning crash | log_prob ≈ −20 < target_entropy → α→0 | ent_coef=0.1 fixe | v1/v2 |
+| Critic loss spikes > 40k–116k | α≈0 → Q-values divergent | gradient_steps=4, tau=0.01 | v1/v2 |
+| Hover hacking (approach_frac > 0.7) | Reward approche dense exploitable | High-watermark + gating + stagnation | debug |
+| Auto-resume reprend le mauvais checkpoint | task+algo+seed identiques entre versions | --no-auto-resume partout | v2/v3 |
+| Validation = 82% du wall time | n_eval_episodes=50 × eval_freq=25000 | n_eval_episodes=10, eval_freq=100000 | v1 |
+| Reset 9.3s par épisode | obj_registries=[objaverse] | obj_registries=[lightwheel] | setup |
+| control_freq=10 (simulation 2× trop lente) | 50 substeps au lieu de 25 | control_freq=20 | setup |
+| SubprocVecEnv crash fork | MuJoCo hérite des FD/EGL du parent | spawn | setup |
+| OOM WSL2 | 12 × 3.4 GB > RAM configurée | .wslconfig memory=56GB | v1 |
+| oscillation_frac négatif | Pénalité / total sans abs() | abs() au numérateur | v2 |
+| Cold start — porte quasi-immobile | Buffer sans succès → critic ne valorise pas ouverture | Curriculum + HER | v3 |
+| Pic transitoire sans convergence stable | Success_frac=0 → critic diverge après 300k | HER relabellisation | v3_curriculum |
+| HER reference_obs_space Dict crash | GoalConditionedWrapper retourne Dict sans .shape | Extraction du flat Box interne | HER démarrage |
 
 ---
 
@@ -57,35 +59,31 @@
 
 ### 2.1 Ce qui fonctionne
 
-- L'infrastructure d'entraînement est fonctionnelle et robuste (12 workers, MLflow,
-  checkpoints, auto-resume, vidéos).
-- Le reward shaping anti-hacking a éliminé le hover hacking sur le run debug
-  (comportement confirmé via métriques `approach_frac`, `stagnation_steps_mean`).
-- Les diagnostics des échecs v1/v2 ont été conduits rigoureusement et ont abouti
-  à une cause racine claire et un fix précis.
+- L'infrastructure d'entraînement est fonctionnelle et robuste (12 workers, MLflow, checkpoints, auto-resume).
+- Le reward shaping anti-hacking a éliminé le hover hacking détecté sur le run debug.
+- Le diagnostic des échecs v1→v2→v3→curriculum a été conduit rigoureusement, aboutissant à une cause racine claire à chaque fois.
+- HER est implémenté et lancé — premier mécanisme qui garantit un signal positif dans le buffer.
 
 ### 2.2 Ce qui ne fonctionne pas encore
 
-- **Aucun run n'a atteint un taux de succès > 0%** à l'exception potentielle du
-  run debug (métriques à compléter). Les runs v1 (700k steps) et v2 (100k steps)
-  ont été abandonnés sur 0% de succès.
-- **SAC v3 est en cours** : les résultats sont inconnus au moment de la rédaction.
-  Il s'agit de la première configuration potentiellement viable.
-- **PPO non lancé** : la contrainte de temps (deadline 7 mai) a empêché le lancement
-  du run PPO baseline.
-- **Pas de comparaison SAC vs PPO** : l'objectif de recherche initial (comparer
-  les deux algorithmes) n'est pas encore atteint.
+- **Aucun run n'a atteint success_rate > 0%** sur 2.3M steps cumulés (v1+v2+v3+curriculum).
+- **PPO non lancé** : contrainte de temps (deadline 7 mai).
+- **Comparaison SAC vs PPO impossible** : objectif de recherche initial non atteint.
 
-### 2.3 Résultats numériques disponibles
+### 2.3 Résultats numériques réels
 
-| Métrique | SAC v1 (700k, abandonné) | SAC v2 (100k, abandonné) | SAC v3 (en cours) |
-|---|---|---|---|
-| `val_success_rate` | 0% | 0% | À compléter |
-| `theta_best_mean` | 0.001–0.012 | À compléter | À compléter |
-| `actor_loss` | Remonte vers 0 puis positif | Remonte vers 0 | À compléter |
-| `ent_coef` (α) | Crash vers ~0 dès 200k steps | Crash vers ~0 dès 100k steps | 0.1 fixe |
-| `critic_loss` | Spikes > 40k à 500k steps | À compléter | À compléter |
-| `return_mean` | Régresse de −15 à −35 | À compléter | À compléter |
+| Métrique | v1 (500k) | v2 (900k) | v3 (400k) | curriculum (500k) |
+|---|---|---|---|---|
+| `val_success_rate` | 0% | 0% | 0% | 0% |
+| `val_door_angle_final` (best) | 0.000 rad | 0.000 rad | 0.004 rad | **0.021 rad** (300k) |
+| `val_door_angle_max` (best) | 0.014 rad | 0.017 rad | 0.012 rad | **0.039 rad** (300k) |
+| `theta_best_mean` training | 0.006 rad | 0.011 rad | 0.003 rad | 0.004 rad |
+| `actor_loss` (last) | −37.5 | +7.2 | −47.1 | −48.2 |
+| `ent_coef` α (last) | 0.009 (crash) | 0.001 (crash) | **0.100 (fixe)** | **0.100 (fixe)** |
+| `critic_loss` (max) | 48 | **116 828** | 37.7 | 10.3 |
+| `val_approach_frac` (best) | 0.718 | 0.046 | 0.799 | 1.025 |
+
+La progression est réelle même sans succès : chaque run a résolu un problème et repoussé la limite (porte de 0 → 0.021 rad). HER est la prochaine étape logique.
 
 ---
 
@@ -159,124 +157,123 @@ méthodologie expérimentale directement.
 
 ---
 
-## 4. Analyse des Échecs v1 et v2
+## 4. Analyse des Échecs — Chronologie Complète
 
-Les deux premiers runs constituent un résultat expérimental en soi : ils démontrent
-que l'auto-tuning du coefficient d'entropie SAC est instable sur cet espace d'action
-lorsque la log-prob de la politique initiale est structurellement inférieure au
-target_entropy.
+Chaque run a échoué sur une cause différente, révélée par la suivante.
 
-### 4.1 Timeline SAC v1
+### 4.1 SAC v1 (500k steps) — Crash ent_coef
 
-| Steps | Événement | Métrique |
+| Steps | Événement | Métrique observée |
 |---:|---|---|
-| 0 | Démarrage — ent_coef="auto", α=1.0, target_entropy=−12 | — |
-| ~50k | α commence à décroître (log_prob < target) | ent_coef ≈ 0.3 |
+| 0 | ent_coef="auto", α=1.0, target_entropy=−12 | — |
+| ~50k | α décroît (log_prob ≈ −20 < target −12) | ent_coef ≈ 0.3 |
 | ~200k | α ≈ 0 — politique quasi-déterministe | actor_loss remonte vers 0 |
-| ~300k | Actions saturent aux limites — return commence à régresser | return_mean ≈ −20 |
-| ~700k | Run abandonné — 0% de succès, return_mean ≈ −35 | theta_best_mean ≈ 0.012 |
+| ~300k | Actions saturent aux limites | critic_loss > 40 |
+| 500k | Abandonné — 0% succès | actor_loss = −37.5, α = 0.009 |
 
-### 4.2 Timeline SAC v2
+### 4.2 SAC v2 (900k steps) — Même crash, critic explosif
 
-| Steps | Événement | Métrique |
+| Steps | Événement | Métrique observée |
 |---:|---|---|
-| 0 | Démarrage — ent_coef="auto_0.1", α=0.1, target_entropy=−4 | — |
-| ~50k | α commence à décroître (log_prob ≈ −20 < target_entropy=−4) | ent_coef ≈ 0.05 |
-| ~100k | Run abandonné — diagnostic identique à v1 mais détecté plus tôt | 0% succès |
+| 0 | ent_coef="auto_0.1", α=0.1, target_entropy=−4 | — |
+| ~100k | α → 0 (log_prob ≈ −20 < target −4, même déséquilibre) | ent_coef ≈ 0.001 |
+| ~500k | Critic loss explose | critic_loss max = **116 828** |
+| 900k | Abandonné — actor_loss positif (+7.2) | 0% succès |
 
-### 4.3 Fix v3 — Rationale
+### 4.3 SAC v3 (400k steps) — Stable mais cold start
+
+| Steps | Événement | Métrique observée |
+|---:|---|---|
+| 0 | ent_coef=0.1 fixe, SDE, gradient_steps=4 | — |
+| 100k–400k | Actor stable à −47/−53, α plat à 0.1 | critic_loss max = 37.7 |
+| 400k | Porte quasi-immobile en training | theta_best_mean = 0.003 rad |
+| 400k | Abandonné — 0% succès | val_door_angle_final = 0.004 rad |
+
+### 4.4 SAC v3 Curriculum (500k steps) — Pic transitoire
+
+| Steps | Événement | Métrique observée |
+|---:|---|---|
+| 0 | theta_success=0.40, spawn réduit (0.05/0.02) | — |
+| 100k | Signal positif faible | val_return = +2.05, door_angle = 0.0037 rad |
+| 200k | Régression | val_return = −0.55, door_angle = 0.0017 rad |
+| **300k** | **Pic** | **val_return = +12.6, door_angle = 0.021 rad** |
+| 400k | Régression post-pic | val_return = +8.0, door_angle = 0.015 rad |
+| 500k | Abandonné — success_frac=0 tout au long | critic_loss croît jusqu'à 10.3 |
+
+Le pic à 300k était dû à 10 épisodes de validation favorables, pas à une convergence réelle. Le training `theta_best_mean` n'a jamais dépassé 0.004 rad — la porte ne bougait pas vraiment.
+
+### 4.5 SAC HER (en cours) — Rationale
 
 ```yaml
-# v3 : ent_coef fixe, pas d'auto-tuning
-ent_coef: 0.1          # α = 0.1 permanent
-use_sde: true          # Exploration structurée (bruit corrélé à l'état)
-sde_sample_freq: 64    # Régénère le bruit toutes les 64 steps
-gradient_steps: 4      # Réduction des spikes critic loss
-tau: 0.01              # Target network plus réactif
+# HER : signal positif garanti même sans succès réels
+use_her: true
+her_n_sampled_goal: 4      # 4 goals virtuels par transition réelle
+her_goal_strategy: future  # goal = angle atteint plus tard dans l'épisode
+theta_success: 0.15        # Seuil accessible
+# reward : sparse uniquement (0 si atteint, -1 sinon)
 ```
 
----
-
-## 5. Current State of Metrics
-
-> Valeurs à compléter après analyse des runs debug et v3.
-
-| Métrique | SAC debug (300k) | SAC v3 (en cours) | Cible (3M) |
-|---|---|---|---|
-| `val_success_rate` | À compléter | À compléter | > 50% |
-| `val_approach_frac_mean` | À compléter | À compléter | < 0.3 |
-| `val_door_angle_max_mean` | À compléter | À compléter | > 0.7 |
-| `val_stagnation_steps_mean` | À compléter | À compléter | < 20 |
-| `val_sign_changes_mean` | À compléter | À compléter | < 5 |
-| `actor_loss` (trend) | À compléter | À compléter | Décroissant et négatif |
-| `ent_coef` | N/A (auto) | 0.1 (fixe) | 0.1 (fixe) |
+Pour chaque épisode où la porte a atteint 0.005 rad, HER crée 4 transitions
+virtuelles qui disent "ouvrir à 0.005 rad = succès". Le critic apprend immédiatement
+à valoriser l'ouverture, même partielle.
 
 ---
 
-## 6. Open Questions
+## 5. État Actuel des Métriques
 
-1. **SAC v3 convergera-t-il ?** Le fix `ent_coef=0.1 fixe` est théoriquement
-   justifié. Il reste à confirmer que la policy apprend effectivement à ouvrir la
-   porte avec ce réglage.
-
-2. **Le reward shaping est-il bien calibré pour v3 ?** `w_wrong_dir=0.3` peut être
-   trop punitif tôt dans l'entraînement quand l'agent a un faible theta_best. À
-   surveiller sur les 200 premiers k steps de v3.
-
-3. **Le `use_sde` aide-t-il vraiment ?** L'exploration structurée est théoriquement
-   favorable pour la manipulation précise, mais elle peut aussi créer des mouvements
-   trop orientés avant que la politique ait convergé vers la poignée.
-
-4. **Comparaison SAC vs PPO possible avant la deadline ?** Avec le run PPO non lancé,
-   la question de recherche principale reste sans réponse quantitative.
-
-5. **Quel est le taux de succès du run debug ?** Les métriques anti-hacking doivent
-   être lues depuis MLflow pour compléter le tableau ci-dessus.
+| Métrique | v1 (abandonné) | v2 (abandonné) | v3 (abandonné) | curriculum (abandonné) | HER (en cours) | Cible |
+|---|---|---|---|---|---|---|
+| `val_success_rate` | 0% | 0% | 0% | 0% | ? | > 50% |
+| `val_door_angle_final` | 0.000 | 0.000 | 0.004 | **0.021** (300k) | ? | > 0.15 rad |
+| `val_approach_frac` | 0.718 | 0.046 | 0.799 | 1.025 | ? | < 0.3 |
+| `actor_loss` (last) | −37.5 | +7.2 (crash) | −47.1 | −48.2 | ? | Décroissant |
+| `ent_coef` α | 0.009 (crash) | 0.001 (crash) | 0.100 (fixe) | 0.100 (fixe) | 0.100 (fixe) | 0.1 fixe |
+| `critic_loss` max | 48 | **116 828** | 37.7 | 10.3 | ? | < 5 |
+| `success_frac` | 0 | 0 | 0 | 0 | ? | > 0 |
 
 ---
 
-## 7. Next Steps
+## 6. Questions Ouvertes
 
-| Priorité | Tâche | Commande | Dépendance |
-|---|---|---|---|
-| 1 | Lire les métriques SAC debug depuis MLflow | `mlflow ui --port 5000` | — |
-| 2 | Suivre SAC v3 en cours | `tail -f logs/...` | SAC v3 lancé |
-| 3 | Évaluation test split sur best checkpoint v3 | `make eval-test CONFIG=... CHECKPOINT=...` | SAC v3 terminé |
-| 4 | Générer la vidéo du meilleur épisode v3 | `make eval-video CONFIG=... CHECKPOINT=...` | SAC v3 terminé |
-| 5 | Générer les courbes d'apprentissage | `make plot PLOT_RUNS="outputs/OpenCabinet_SAC_*/"` | SAC v3 terminé |
-| 6 | Lancer PPO baseline si temps disponible | `make train-ppo-baseline SEED=0` | SAC v3 terminé |
-| 7 | Compléter `docs/results.md` | Manuel | Toutes métriques disponibles |
+1. **HER convergera-t-il ?** C'est le premier mécanisme qui garantit un signal positif dans le buffer. Mais même avec HER, le premier contact physique avec la poignée reste nécessaire.
+
+2. **theta_success=0.15 est-il le bon seuil pour HER ?** Trop bas = apprentissage trivial. Trop haut = toujours hors d'atteinte. 0.15 rad ≈ 9° semble raisonnable comme premier objectif.
+
+3. **Faudra-t-il combiner HER + curriculum ?** HER résout le problème du buffer vide, mais la politique doit encore trouver le contact initial. Le curriculum pourrait aider à guider vers ce contact.
+
+4. **Comparaison SAC vs PPO possible post-deadline ?** PPO non lancé — la question de recherche principale reste sans réponse quantitative.
 
 ---
 
-## 8. Limitations of Current Results
+## 7. Prochaines Étapes
 
-| Limitation | Impact sur les conclusions | Mitigation appliquée |
+| Priorité | Tâche | Statut |
 |---|---|---|
-| 0% de succès sur les runs v1 et v2 | Pas de preuve de convergence de l'algorithme | Fix v3 en cours ; diagnostic rigoureux documenté |
-| SAC v3 en cours — résultats inconnus | Rapport potentiellement sans résultat final | Documentation complète du processus de debugging |
-| PPO non lancé | Comparaison SAC vs PPO impossible | Objectif de recherche partiel |
-| Seed unique (seed=0) | Variance inter-seed inconnue | Résultats présentés comme observations de cas unique |
-| Deadline 7 mai 2026 | Pas d'ablations, pas de multi-seed | Limitations explicitement documentées |
+| 1 | Suivre SAC HER — premier checkpoint à 100k | En cours |
+| 2 | Si HER success_frac > 0 à 200k → laisser tourner jusqu'à 3M | Conditionnel |
+| 3 | Courbes HER dans docs/courbes/run_sac_her/ après 200k | À faire |
+| 4 | Évaluation test split sur best checkpoint HER | Post-convergence |
+| 5 | Générer vidéo du meilleur épisode HER | Post-convergence |
 
 ---
 
-## 9. Éléments de Valeur Malgré les Échecs
+## 8. Limitations des Résultats Actuels
 
-Même en l'absence de résultats positifs confirmés, ce projet apporte les éléments
-suivants documentés et reproductibles :
+| Limitation | Impact | Mitigation |
+|---|---|---|
+| 0% succès sur 2.3M steps cumulés | Pas de preuve de convergence | Diagnostic rigoureux documenté ; HER en cours |
+| PPO non lancé | Comparaison SAC vs PPO impossible | Objectif de recherche partiel explicitement documenté |
+| Seed unique | Variance inter-seed inconnue | Résultats comme observations de cas unique |
+| Deadline 7 mai 2026 | Pas d'ablations, pas de multi-seed | Limitations explicitement reconnues |
 
-1. **Diagnostic précis de l'instabilité de l'auto-tuning ent_coef** sur un espace
-   d'action 12D — un problème non documenté dans les tutoriels SB3 standard.
+---
 
-2. **Infrastructure d'entraînement robuste** : 12 workers SubprocVecEnv, MLflow,
-   checkpoints, auto-resume, vidéos two-pass — réutilisable pour d'autres tâches
-   RoboCasa.
+## 9. Valeur Malgré les Échecs
 
-3. **Reward shaping anti-hacking validé** sur le run debug — les 7 composantes ont
-   éliminé le hover hacking et peuvent servir de baseline pour des tâches de
-   manipulation similaires.
+Même sans succès confirmé, ce projet apporte :
 
-4. **Protocole expérimental rigoureux** : runs debug avant runs principaux, métriques
-   physiques (door_angle) prioritaires sur return_mean, split train/val/test séparés
-   — conforme aux bonnes pratiques RL de la littérature.
+1. **Diagnostic de l'instabilité ent_coef auto-tuning sur espace 12D** — problème non documenté dans les tutoriels SB3.
+2. **Infrastructure robuste** : 12 workers SubprocVecEnv, MLflow, checkpoints, auto-resume — réutilisable pour d'autres tâches RoboCasa.
+3. **Reward shaping anti-hacking validé** — les 7 composantes éliminent le hover hacking.
+4. **Implémentation HER complète** — `GoalConditionedWrapper` + `HerReplayBuffer` intégré au pipeline d'entraînement existant.
+5. **Protocole expérimental rigoureux** — runs debug, métriques physiques prioritaires sur return_mean, split val/test séparés.

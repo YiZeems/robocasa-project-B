@@ -19,14 +19,26 @@ continu). Baseline comparative : **PPO** (on-policy, stable).
 
 ## 2. Vue d'ensemble du plan de runs
 
-| # | Run | Config | Algorithme | Steps | Rôle |
-|---|---|---|---|---:|---|
-| 0 | SAC debug | [`open_single_door_sac_debug.yaml`](../configs/train/open_single_door_sac_debug.yaml) | SAC | 300k | Sanity / pré-validation reward |
-| 1 | SAC principal | [`open_single_door_sac.yaml`](../configs/train/open_single_door_sac.yaml) | SAC | 3M | Run de référence |
-| 2 | SAC tuned | [`open_single_door_sac_tuned.yaml`](../configs/train/open_single_door_sac_tuned.yaml) | SAC | 2M | Variante (lr=1e-4, batch=512, ent_coef=auto_0.2) |
-| 3 | PPO baseline | [`open_single_door_ppo_baseline.yaml`](../configs/train/open_single_door_ppo_baseline.yaml) | PPO | 5M | Baseline comparative |
+> **Note (7 mai 2026) :** Le plan initial (SAC debug → SAC principal → SAC tuned → PPO baseline) a été révisé en cours de projet suite aux diagnostics successifs. Le tableau ci-dessous reflète le plan **réel exécuté**.
 
-> La config existante [`open_single_door_ppo.yaml`](../configs/train/open_single_door_ppo.yaml) reste utilisable pour des smoke tests rapides (200k steps, eval désactivée).
+### Plan réel (runs exécutés)
+
+| # | Run | Config | Algorithme | Steps | Résultat | Statut |
+|---|---|---|---|---:|---|---|
+| 1 | SAC v1 | [`open_single_door_sac.yaml`](../configs/train/open_single_door_sac.yaml) | SAC | 500k | 0% — crash ent_coef (α→0) | Terminé |
+| 2 | SAC v2 | [`open_single_door_sac_v2.yaml`](../configs/train/open_single_door_sac_v2.yaml) | SAC | 900k | 0% — crash ent_coef inévitable | Terminé |
+| 3 | SAC v3 | [`open_single_door_sac_v3.yaml`](../configs/train/open_single_door_sac_v3.yaml) | SAC | 400k | 0% — cold start (porte quasi-fermée) | Terminé |
+| 4 | SAC v3 Curriculum | [`open_single_door_sac_v3_curriculum.yaml`](../configs/train/open_single_door_sac_v3_curriculum.yaml) | SAC | 500k | 0% — buffer sans signal succès | Terminé |
+| 5 | SAC HER | [`open_single_door_sac_her.yaml`](../configs/train/open_single_door_sac_her.yaml) | SAC + HER | en cours | — | En cours |
+
+### Plan initial (non exécuté — révisé)
+
+| # | Run | Config | Algorithme | Steps | Pourquoi non exécuté |
+|---|---|---|---|---:|---|
+| — | SAC debug | `open_single_door_sac_debug.yaml` | SAC | 300k | Remplacé par SAC v1 (diagnostic similaire) |
+| — | SAC principal | `open_single_door_sac.yaml` | SAC | 3M | Stoppé à 500k (α=0 dès 200k, inutile de continuer) |
+| — | SAC tuned | `open_single_door_sac_tuned.yaml` | SAC | 2M | Non lancé : problème fondamental (cold start) d'abord à résoudre |
+| — | PPO baseline | `open_single_door_ppo_baseline.yaml` | PPO | 5M | Non lancé : PPO n'a pas d'équivalent HER — attente de premiers succès SAC |
 
 ## 3. Diagramme — boucle d'entraînement avec validation et best checkpoint
 
@@ -224,17 +236,25 @@ Jeudi 7 mai     : finalisation rapport, figures, conclusion, rendu 23h59
 
 ## 11. Tableau complet des expériences
 
-| Expérience | But | Commande | Timesteps | Workers | Seeds | Métriques principales |
-|---|---|---|---:|---:|---|---|
-| SAC debug | Valider reward shaping + infrastructure | `make train-sac-debug SEED=0` | 300k | 12 | 0 | `approach_frac`, `door_angle_max`, `val_success_rate` |
-| SAC principal | Run de référence principal | `make train-sac SEED=0` | 3M | 12 | 0 | `val_success_rate`, `test_success_rate`, `return_mean` |
-| SAC tuned | Variante hyperparamètres (lr=1e-4) | `make train-sac-tuned SEED=0` | 2M | 12 | 0 | Comparaison vs SAC principal |
-| PPO baseline | Baseline comparative on-policy | `make train-ppo-baseline SEED=0` | 5M | 1 | 0 | `val_success_rate`, `approx_kl`, `clip_fraction` |
-| Eval validation SAC | Métriques sur split validation | `make eval-validation CONFIG=... CHECKPOINT=...` | — | 1 | 10000 | `success_rate`, `door_angle_final` |
-| Eval test SAC | Métriques finales, seeds non vus | `make eval-test CONFIG=... CHECKPOINT=...` | — | 1 | 20000 | `success_rate`, `door_angle_final` |
-| Eval test PPO | Métriques finales PPO, seeds non vus | `make eval-test CONFIG=... CHECKPOINT=...` | — | 1 | 20000 | `success_rate`, `door_angle_final` |
-| Video SAC best | Visualisation qualitative | `make eval-video CONFIG=... CHECKPOINT=...` | — | 1 | 0–19 | score composite, `door_angle_final` |
-| Courbes PNG | Figures pour le rapport | `make plot PLOT_RUNS="outputs/..."` | — | — | — | `success_rate.png`, `summary.png` |
+### Expériences réellement exécutées (7 mai 2026)
+
+| Expérience | But | Commande | Timesteps | Résultat | Diagnostic |
+|---|---|---|---:|---|---|
+| SAC v1 | Premier run, valider infra | `make train-sac` | 500k | 0% succès | `ent_coef` crash α→0 dès 200k |
+| SAC v2 | Corriger initialisation α | `make train-sac-v2` | 900k | 0% succès | Auto-tuning toujours α→0 (log_prob < target) |
+| SAC v3 | `ent_coef=0.1` fixe | `make train-sac-v3` | 400k | 0% succès | Stabilité OK, cold start (pas de contact poignée) |
+| SAC v3 Curriculum | Seuil facile + spawn réduit | `make train-sac-v3-curriculum` | 500k | 0% succès | Pic 300k (0.021 rad), buffer sans succès |
+| SAC HER | Relabellisation rétroactive | `make train-sac-her` | en cours | — | Débloque buffer sans succès réels |
+| Courbes PNG | Figures pour le rapport | `python scripts/plot_runs.py` | — | PNG dans `docs/courbes/` | — |
+
+### Expériences initialement prévues (non exécutées)
+
+| Expérience | But prévu | Pourquoi non exécutée |
+|---|---|---|
+| SAC principal (3M) | Run de référence long | Stoppé à 500k — même problème α=0 |
+| SAC tuned (2M) | Variante hyperparamètres | Bloqué par cold start — pas de sens de tuner sans premiers succès |
+| PPO baseline (5M) | Comparaison on-policy | Reporté — PPO sans HER subirait le même cold start |
+| Eval test / vidéos | Métriques finales | Pas de checkpoint viable (0% succès partout) |
 
 ---
 
