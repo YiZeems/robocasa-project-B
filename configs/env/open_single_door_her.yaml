@@ -1,0 +1,50 @@
+env:
+  task: OpenCabinet
+  robots: PandaOmron
+  controller: null
+  use_gym_wrapper: false
+  horizon: 500
+  control_freq: 20
+
+  reward_shaping: true
+  use_object_obs: true
+  use_camera_obs: false
+
+  has_renderer: false
+  has_offscreen_renderer: false
+  render_camera: robot0_agentview_center
+  camera_names:
+    - robot0_agentview_center
+  camera_height: 128
+  camera_width: 128
+  obj_registries:
+    - lightwheel
+
+  ignore_done: false
+
+  robot_spawn_deviation_pos_x: 0.05
+  robot_spawn_deviation_pos_y: 0.02
+
+  # Enable GoalConditionedWrapper — required for HerReplayBuffer.
+  # theta_success is read from the reward block below.
+  use_her: true
+
+reward:
+  w_approach: 0.0
+  w_progress: 0.0
+  w_success: 0.0
+  w_action_reg: 0.0
+  w_stagnation: 0.0
+  w_wrong_dir: 0.0
+  w_oscillation: 0.0
+
+  # HER uses sparse reward: 0 if door >= theta_success, -1 otherwise.
+  # AntiHackingReward is disabled (all weights = 0) to keep reward clean.
+  theta_success: 0.15
+
+  d_max: 0.6
+  d_prox: 0.12
+  stagnation_n: 50
+  tol_wrong_dir: 0.02
+  oscillation_window: 20
+  oscillation_threshold: 4

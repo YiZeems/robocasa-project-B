@@ -405,6 +405,9 @@ def _build_sac(
 
     `ent_coef` accepts numeric values, the literal string "auto", or strings of
     form "auto_<initial>" so the YAML can stay strict-typed.
+
+    When `use_her: true`, SAC uses HerReplayBuffer with goal-conditioned observations.
+    The environment must implement the GoalEnv interface (GoalConditionedWrapper).
     """
 
     policy_kwargs = _resolve_policy_kwargs(train_cfg)
@@ -415,8 +418,18 @@ def _build_sac(
     else:
         ent_coef = float(raw_ent)
 
+    replay_buffer_class = None
+    replay_buffer_kwargs: dict[str, Any] = {}
+    if bool(train_cfg.get("use_her", False)):
+        from stable_baselines3.her.her_replay_buffer import HerReplayBuffer
+        replay_buffer_class = HerReplayBuffer
+        replay_buffer_kwargs = {
+            "n_sampled_goal": int(train_cfg.get("her_n_sampled_goal", 4)),
+            "goal_selection_strategy": str(train_cfg.get("her_goal_strategy", "future")),
+        }
+
     return SAC(
-        policy=train_cfg.get("policy", "MlpPolicy"),
+        policy=train_cfg.get("policy", "MultiInputPolicy" if replay_buffer_class else "MlpPolicy"),
         env=env,
         learning_rate=_resolve_lr(train_cfg),
         buffer_size=int(train_cfg.get("buffer_size", 1_000_000)),
@@ -431,6 +444,8 @@ def _build_sac(
         target_entropy=train_cfg.get("target_entropy", "auto"),
         use_sde=bool(train_cfg.get("use_sde", False)),
         sde_sample_freq=int(train_cfg.get("sde_sample_freq", -1)),
+        replay_buffer_class=replay_buffer_class,
+        replay_buffer_kwargs=replay_buffer_kwargs if replay_buffer_kwargs else None,
         tensorboard_log=None,
         policy_kwargs=policy_kwargs or None,
         seed=seed,
@@ -950,8 +965,14 @@ def main() -> None:
 
     # Build a single env first to fix the obs space, then use it as reference
     # for all parallel workers so every worker has the same obs shape.
+    # For HER envs (GoalConditionedWrapper), workers need the inner flat Box
+    # obs space, not the outer Dict space — RawRoboCasaAdapter uses it to
+    # normalize the flat vector across scenes with different dict layouts.
     _ref_env = make_env_from_config(ctx.env_cfg, seed=ctx.seed)
-    reference_obs_space = _ref_env.observation_space
+    _inner = getattr(_ref_env, "_base", None)
+    reference_obs_space = (
+        _inner.observation_space if _inner is not None else _ref_env.observation_space
+    )
     _ref_env.close()
 
     train_env = _make_vec_env(
@@ -1054,7 +1075,7 @@ def main() -> None:
             val_env = make_env_from_config(
                 ctx.env_cfg,
                 seed=validation_seed,
-                reference_obs_space=train_env.observation_space,
+                reference_obs_space=reference_obs_space,
             )
             val_callback = ValidationCallback(
                 eval_env=val_env,
