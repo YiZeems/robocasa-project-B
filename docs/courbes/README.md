@@ -1,368 +1,263 @@
 # Courbes d'entraînement — RoboCasa OpenCabinet SAC
 
-Run : `OpenCabinet_SAC_seed0_20260507_073628` — algorithme SAC, tâche `OpenCabinet` (ouvrir une porte de placard avec un bras robotique).
+Tâche : ouvrir une porte de placard avec un bras robotique PandaOmron. Algorithme : SAC (Soft Actor-Critic). Ce README retrace l'évolution des runs successifs, les problèmes rencontrés, les corrections apportées, et les métriques à surveiller.
 
-Les courbes sont dans le dossier [`run_sac_3M/`](run_sac_3M/).
+---
+
+## Table des matières
+
+1. [Contexte général](#contexte-général)
+2. [Run SAC v1 — 500k steps](#run-sac-v1--500k-steps)
+3. [Run SAC v2 — 900k steps](#run-sac-v2--900k-steps)
+4. [Run SAC v3 — 400k steps](#run-sac-v3--400k-steps)
+5. [Run SAC v3 Curriculum — 500k steps](#run-sac-v3-curriculum--500k-steps)
+6. [Run SAC HER — en cours](#run-sac-her--en-cours)
+7. [Référence des métriques](#référence-des-métriques)
 
 ---
 
 ## Contexte général
 
-L'agent apprend à ouvrir une porte de placard en 3 millions de steps d'environnement. À chaque step, il reçoit une observation (positions, vitesses, état de la porte) et produit une action (commande du bras). La récompense est shapée : elle guide l'agent vers la poignée, récompense l'ouverture progressive, et donne un bonus sparse quand la porte dépasse 90% d'ouverture (= succès).
+L'agent reçoit à chaque step une observation de 248 dimensions (positions joints, vitesses, distance poignée-EEF, état porte…) et produit une action 12D (commande OSC du bras). L'horizon est de 500 steps par épisode. Un succès = porte ouverte au-delà d'un seuil angulaire configurable.
 
-Les métriques sont divisées en 3 catégories :
+Le reward est **shapé** (dense) pour guider l'apprentissage :
+- **Approche** : récompense quand le bras se rapproche de la poignée
+- **Progression** : récompense proportionnelle à l'ouverture de la porte
+- **Succès** : bonus sparse quand la porte dépasse le seuil
+- **Pénalités** : stagnation, oscillation, mauvaise direction, régularisation des actions
 
-- **Train** : métriques internes de l'algorithme SAC, loguées à chaque gradient update (~65 000 points)
-- **Reward Hack Monitor** : métriques sur les épisodes d'entraînement rolling, loguées tous les 100 000 steps (7 points au total)
-- **Validation** : métriques sur des épisodes avec seed fixe, loguées tous les 100 000 steps (7 points)
-
----
-
-## TRAIN — Métriques internes SAC (6 courbes)
-
-Ces métriques viennent directement de l'algorithme SAC (Stable-Baselines3). Elles permettent de surveiller la santé de l'apprentissage au niveau des réseaux de neurones.
-
-### train_01 — Actor Loss
-![Actor Loss](run_sac_3M/train_01_actor_loss.png)
-
-**Ce que c'est :** la perte de l'acteur (la politique). En SAC, l'acteur est entraîné à maximiser la valeur Q tout en maintenant une entropie élevée. La loss est donc négative (on maximise, donc on minimise son opposé).
-
-**Ce qu'on veut voir :** une valeur négative qui descend (devient de plus en plus négative), ce qui signifie que la politique trouve de meilleures actions. Une stagnation ou une remontée peut indiquer un problème d'exploration ou un critic instable.
+Les runs sont évalués périodiquement en **validation déterministe** (seed fixée, pas d'exploration) pour mesurer la vraie politique apprise.
 
 ---
 
-### train_02 — Critic Loss
-![Critic Loss](run_sac_3M/train_02_critic_loss.png)
+## Run SAC v1 — 500k steps
 
-**Ce que c'est :** l'erreur du critic (le réseau qui estime la valeur Q). C'est une erreur quadratique moyenne (MSE) entre la valeur Q prédite et la cible TD (Temporal Difference).
+**Dossier :** [`run_sac_v1/`](run_sac_v1/)
+**Run ID :** `20260506_201751`
+**Config :** `open_single_door_sac.yaml`
 
-**Ce qu'on veut voir :** une valeur qui diminue au fil du temps. Si elle reste très élevée ou explose, le critic n'arrive pas à apprendre une bonne estimation de la récompense future — ce qui bloque aussi l'acteur.
+### Paramètres clés
 
----
+| Paramètre | Valeur |
+|---|---|
+| `ent_coef` | `"auto"` (auto-tuning) |
+| `target_entropy` | `"auto"` (= -action_dim = -12) |
+| `learning_rate` | 3e-4 constant |
+| `use_sde` | false |
+| `net_arch` | [256, 256] |
+| `theta_success` | 0.90 (90% d'ouverture) |
 
-### train_03 — Entropy Coefficient (α)
-![Entropy Coef](run_sac_3M/train_03_ent_coef.png)
+### Ce qui s'est passé
 
-**Ce que c'est :** SAC ajuste automatiquement un coefficient α qui pondère l'entropie dans l'objectif. L'entropie mesure à quel point la politique est aléatoire. Un α élevé force l'agent à explorer ; un α faible le laisse se spécialiser.
+L'acteur loss chutait vers -50 rapidement puis **remontait** après 100k steps. Le coefficient d'entropie α crashait vers 0 dès 200k steps. La validation door angle finale stagnait à ~0.003 rad (porte quasi fermée). Success rate = 0 tout le long.
 
-**Ce qu'on veut voir :** α commence élevé (exploration) puis diminue progressivement à mesure que la politique converge. Si α reste trop haut jusqu'à la fin, l'agent n'a pas convergé. Si il chute trop tôt, l'agent peut se coincer dans un comportement sous-optimal.
+**Cause racine identifiée :** SAC avec `ent_coef="auto"` calcule α en résolvant :
 
----
+```
+∇α = α × (-log_prob - target_entropy)
+```
 
-### train_04 — Entropy Coef Loss
-![Entropy Coef Loss](run_sac_3M/train_04_ent_coef_loss.png)
+Avec `log_prob ≈ -20` (12D gaussienne) et `target_entropy = -12`, on obtient toujours `-20 - (-12) = -8 < 0`, ce qui pousse α → 0 **sans jamais s'arrêter**. Résultat : politique déterministe trop tôt, Q-values divergentes, critic loss explosant à **40 000+**.
 
-**Ce que c'est :** le gradient qui ajuste α automatiquement. C'est la différence entre l'entropie actuelle de la politique et l'entropie cible (target entropy). Quand la politique est trop déterministe, cette loss est positive et pousse α à la hausse.
+### Pourquoi arrêtée
 
-**Ce qu'on veut voir :** une valeur qui oscille autour de zéro et converge, signe que l'entropie de la politique est proche de la cible fixée.
+Aucun progrès après 200k steps. α = 0 → plus d'exploration → l'agent n'ouvre jamais la porte.
 
----
+### Amélioration apportée → v2
 
-### train_05 — Learning Rate
-![Learning Rate](run_sac_3M/train_05_learning_rate.png)
-
-**Ce que c'est :** le taux d'apprentissage utilisé par l'optimiseur Adam pour mettre à jour les poids des réseaux (acteur et critic).
-
-**Ce qu'on veut voir :** constant à 3e-4 dans ce run (pas de scheduler). Une courbe plate est normale ici.
-
----
-
-### train_06 — Gradient Updates (n_updates)
-![N Updates](run_sac_3M/train_06_n_updates.png)
-
-**Ce que c'est :** le nombre cumulé de mises à jour de gradient depuis le début du run. Avec `gradient_steps=1`, il y a un update par step d'environnement (après le remplissage du replay buffer).
-
-**Ce qu'on veut voir :** une droite croissante. Permet de vérifier que l'entraînement n'a pas été interrompu ou ralenti.
+Passer à `ent_coef="auto_0.1"` (initialisation à 0.1) et `target_entropy=-4` (cible moins agressive) pour éviter le crash de α.
 
 ---
 
-## REWARD HACK MONITOR — Métriques d'entraînement rolling (12 courbes)
+## Run SAC v2 — 900k steps
 
-Ces métriques sont calculées sur les épisodes d'entraînement en cours (fenêtre glissante). Elles servent à détecter les comportements de **reward hacking** : l'agent qui exploite le shaping de récompense sans vraiment apprendre la tâche.
+**Dossier :** [`run_sac_v2/`](run_sac_v2/)
+**Run ID :** `20260507_073628`
+**Config :** `open_single_door_sac_v2.yaml`
 
-*Note : seulement 7 points car loguées tous les 100 000 steps sur 700 000 steps effectifs.*
+### Paramètres clés
 
----
+| Paramètre | Valeur |
+|---|---|
+| `ent_coef` | `"auto_0.1"` |
+| `target_entropy` | `-4` |
+| `learning_rate` | 3e-4 cosine → 1e-5 |
+| `use_sde` | true, `sde_sample_freq=64` |
+| `net_arch` | [400, 300] |
+| `gradient_steps` | 4 |
+| `tau` | 0.01 |
 
-### rh_01 — Train Success Rate
-![Train Success Rate](run_sac_3M/rh_01_train_success_rate.png)
+### Ce qui s'est passé
 
-**Ce que c'est :** taux de succès sur les épisodes d'entraînement récents (rolling). Un épisode est un succès si la porte dépasse 90% d'ouverture avant la fin.
+α partait de 0.1 et retombait encore à 0 vers 100k steps. Avec `log_prob ≈ -20` et `target_entropy=-4`, le gradient est toujours `-20 - (-4) = -16 < 0` → α crash inévitable, juste retardé. La critic loss restait plus raisonnable (~4–6) grâce à `gradient_steps=4` et `tau=0.01`, mais l'actor loss remontait après 200k. Success rate = 0 sur toute la durée des 900k steps.
 
-**Ce qu'on veut voir :** une valeur qui monte au cours du temps. C'est un indicateur précoce de progression, disponible entre deux évaluations de validation.
+**Cause racine identifiée :** le problème de fond n'est pas l'initialisation de α mais l'auto-tuning lui-même : avec un espace d'action 12D et des policies gaussiennes standard, `log_prob` sera **toujours** plus négatif que `target_entropy` raisonnable. α → 0 est inévitable tant qu'on utilise l'auto-tuning.
 
----
+### Pourquoi arrêtée
 
-### rh_02 — Success Fraction
-![Success Frac](run_sac_3M/rh_02_success_frac.png)
+900k steps, 0 succès, α toujours à 0 après 100k. Aucun signe de progrès.
 
-**Ce que c'est :** similaire au train success rate mais calculé sur la fenêtre de monitoring complète (pas rolling). Fraction des épisodes terminés en succès dans la fenêtre courante.
+### Amélioration apportée → v3
 
-**Ce qu'on veut voir :** monte vers 1.0 en fin d'entraînement.
-
----
-
-### rh_03 — Best Door Angle (mean)
-![Theta Best](run_sac_3M/rh_03_theta_best_mean.png)
-
-**Ce que c'est :** meilleur angle de porte atteint **pendant** l'épisode (pas à la fin), moyenné sur tous les épisodes de la fenêtre. Normalisé entre 0 (porte fermée) et 1 (porte complètement ouverte). Le seuil de succès est à 0.90.
-
-**Ce qu'on veut voir :** une valeur qui monte progressivement. Même si l'agent ne tient pas la porte ouverte jusqu'à la fin (donc pas de succès), ce graphe montre qu'il progresse dans l'ouverture. Très utile en début d'entraînement quand le success rate est encore à 0.
-
----
-
-### rh_04 — Approach Fraction
-![Approach Frac](run_sac_3M/rh_04_approach_frac.png)
-
-**Ce que c'est :** fraction de la récompense totale provenant du signal d'approche (guidage du bras vers la poignée). Ce signal est donné dès que le bras se rapproche de la poignée, même sans ouvrir la porte.
-
-**Ce qu'on veut voir :** une valeur **faible et décroissante**. Si cette fraction est élevée, l'agent a appris à rester près de la poignée sans ouvrir la porte pour accumuler de la récompense — c'est du **hover-hacking**. En fin d'entraînement, la récompense de succès doit dominer.
+Fixer `ent_coef=0.1` **sans auto-tuning**. L'entropie reste constante tout le long, ce qui maintient l'exploration.
 
 ---
 
-### rh_05 — Progress Fraction
-![Progress Frac](run_sac_3M/rh_05_progress_frac.png)
+## Run SAC v3 — 400k steps
 
-**Ce que c'est :** fraction de la récompense provenant du signal de progression (ouverture progressive de la porte). C'est le signal principal du shaping.
+**Dossier :** [`run_sac_v3/`](run_sac_v3/)
+**Run ID :** `20260507_112859`
+**Config :** `open_single_door_sac_v3.yaml`
 
-**Ce qu'on veut voir :** élevée en milieu d'entraînement (l'agent apprend à ouvrir), puis remplacée par la récompense de succès en fin d'entraînement.
+### Paramètres clés
 
----
+| Paramètre | Valeur |
+|---|---|
+| `ent_coef` | `0.1` (fixe) |
+| `learning_rate` | 3e-4 cosine → 1e-5 |
+| `use_sde` | true, `sde_sample_freq=64` |
+| `net_arch` | [400, 300] |
+| `gradient_steps` | 4 |
+| `tau` | 0.01 |
+| `theta_success` | 0.90 |
 
-### rh_06 — Reward Without Success Bonus
-![Reward w/o Success](run_sac_3M/rh_06_reward_without_success.png)
+### Ce qui s'est passé
 
-**Ce que c'est :** récompense cumulée par épisode en excluant le bonus sparse de succès. Permet de voir si l'agent accumule de la récompense par le shaping seul, sans vraiment réussir la tâche.
+**Amélioration claire sur les métriques internes :** α plat à 0.1 ✅, actor loss stable à -45/-50 sans remontée ✅, critic loss contenu à ~2-4 (vs 40 000 en v1) ✅. L'agent apprend quelque chose de stable.
 
-**Ce qu'on veut voir :** cette valeur peut croître en début d'apprentissage (l'agent apprend le shaping). En fin d'entraînement, si elle est très élevée mais que le success rate est bas, c'est un signe de reward hacking.
+Cependant, la validation `door_angle_final_mean` restait à ~0.001-0.003 rad. En training, `theta_best_mean ≈ 0.003` rad. La politique déterministe n'ouvre pas la porte du tout. Success rate = 0.
 
----
+**Problème résiduel :** même avec entropie fixe, l'agent ne parvient pas à établir le premier contact avec la poignée pour déclencher la récompense de progression. Sans ce premier signal, le critic n'apprend pas de Q-values positives → l'actor ne cherche pas à ouvrir. C'est le **cold start problem** de la manipulation.
 
-### rh_07 — Oscillation Fraction
-![Oscillation Frac](run_sac_3M/rh_07_oscillation_frac.png)
+### Pourquoi arrêtée
 
-**Ce que c'est :** fraction des épisodes dans lesquels une oscillation de la porte a été détectée (la porte va et vient sans progresser).
+400k steps, stabilité interne ✅ mais porte quasi-fermée à la validation ❌. La politique n'a pas trouvé comment interagir physiquement avec la poignée.
 
-**Ce qu'on veut voir :** proche de 0. Une valeur élevée indique que l'agent secoue la porte sans l'ouvrir vraiment, ce qui peut être un comportement de hacking du signal de progression.
+### Amélioration apportée → v3 Curriculum
 
----
-
-### rh_08 — Oscillation Steps (mean)
-![Oscillation Steps](run_sac_3M/rh_08_oscillation_steps_mean.png)
-
-**Ce que c'est :** nombre moyen de steps passés en oscillation par épisode (parmi les épisodes où une oscillation est détectée).
-
-**Ce qu'on veut voir :** faible. Si l'agent passe beaucoup de temps à osciller, il gaspille du temps d'épisode et exploite le shaping.
-
----
-
-### rh_09 — Sign Changes (mean)
-![Sign Changes](run_sac_3M/rh_09_sign_changes_mean.png)
-
-**Ce que c'est :** nombre moyen de fois où la direction de mouvement de la porte change de signe (ouverture → fermeture ou inverse) par épisode. Indicateur brut d'oscillation.
-
-**Ce qu'on veut voir :** faible et décroissant. En début d'entraînement, beaucoup de changements de direction = comportement aléatoire. En fin d'entraînement, l'agent doit ouvrir la porte de manière monotone.
+Réduire le **seuil de succès** à 0.40 (40% d'ouverture au lieu de 90%) et **réduire la variance de spawn** du robot (position de départ plus cohérente) pour créer une version plus facile à apprendre en premier lieu.
 
 ---
 
-### rh_10 — Stagnation Rate
-![Stagnation Rate](run_sac_3M/rh_10_stagnation_rate.png)
+## Run SAC v3 Curriculum — 500k steps
 
-**Ce que c'est :** taux d'épisodes où la porte ne bouge plus pendant une longue période (stagnation). L'agent peut être bloqué (bras coincé, politique convergée vers rester immobile).
+**Dossier :** [`run_sac_v3_curriculum/`](run_sac_v3_curriculum/)
+**Run ID :** `20260507_133418`
+**Config :** `open_single_door_sac_v3_curriculum.yaml`
 
-**Ce qu'on veut voir :** proche de 0 en fin d'entraînement. Une valeur élevée indique que l'agent abandonne souvent au milieu d'un épisode.
+### Paramètres clés
 
----
+| Paramètre | Valeur |
+|---|---|
+| `ent_coef` | `0.1` (fixe) |
+| `theta_success` | **0.40** (curriculum, vs 0.90 avant) |
+| `robot_spawn_deviation_pos_x` | **0.05** (vs 0.15 défaut) |
+| `robot_spawn_deviation_pos_y` | **0.02** (vs 0.05 défaut) |
+| `w_wrong_dir` | 0.05 (réduit de 0.3 → moins punitif) |
+| `w_stagnation` | 0.02 (réduit → plus tolérant) |
+| `d_max` | 0.6 (élargi → récompense d'approche plus longue portée) |
 
-### rh_11 — Stagnation Steps (mean)
-![Stagnation Steps](run_sac_3M/rh_11_stagnation_steps_mean.png)
+### Ce qui s'est passé
 
-**Ce que c'est :** nombre moyen de steps passés en stagnation par épisode (parmi ceux qui stagnent).
+**Signal positif à 300k steps :** `val_return_mean` a bondi de -0.55 → +12.60, `val_door_angle_final_mean` a atteint 0.021 rad (12× mieux que v3). L'agent commençait à pousser la porte.
 
-**Ce qu'on veut voir :** faible. Si l'agent stagne longtemps, il perd du temps d'épisode sans apprendre.
+**Mais régresssion à 400-500k steps :** `val_door_angle_final_mean` redescendait à 0.015-0.017, `val_return_mean` à 8-9. Le pic à 300k était une fluctuation sur 10 épisodes de validation, pas de la vraie politique stable. `theta_best_mean` en training stagnait à 0.003-0.004 rad : **la porte bouge à peine même pendant l'entraînement avec exploration**.
 
----
+**Diagnostic final :** la critic loss continuait à croître (0 → 6+) car le replay buffer contenait 500k transitions avec récompense nulle ou négative — aucun signal de succès n'a jamais été observé (`success_frac=0`). Sans succès, le critic ne peut pas apprendre à valoriser l'ouverture de la porte → actor ne sait pas que c'est bien d'ouvrir.
 
-### rh_12 — Episodes Logged
-![Episodes](run_sac_3M/rh_12_episodes.png)
+### Pourquoi arrêtée
 
-**Ce que c'est :** nombre total d'épisodes enregistrés dans la fenêtre de monitoring depuis le début du run.
+500k steps, 0 succès même avec theta_success=0.40 abaissé. Le **problème fondamental** n'est pas le seuil mais le fait que le replay buffer ne contient jamais de transitions avec un signal de succès positif. Le shaping dense ne suffit pas pour ce type de manipulation précise.
 
-**Ce qu'on veut voir :** croissance régulière. Permet de vérifier que les épisodes sont bien collectés et que le monitoring fonctionne.
+### Amélioration apportée → HER
 
----
-
-## VALIDATION — Métriques de validation (19 courbes)
-
-Évaluées sur des épisodes déterministes avec un seed fixe (`validation_seed=10000`), donc reproductibles. Ces métriques sont plus fiables que les métriques d'entraînement car elles ne dépendent pas de l'exploration.
-
----
-
-### val_01 — Success Rate
-![Success Rate](run_sac_3M/val_01_success_rate.png)
-
-**Ce que c'est :** taux de succès sur les épisodes de validation. **C'est la métrique principale du projet.** Un épisode est un succès si la porte dépasse 90% d'ouverture avant la fin (500 steps max).
-
-**Ce qu'on veut voir :** monte vers 1.0. Le meilleur modèle est sauvegardé au checkpoint avec le success rate le plus élevé.
+Utiliser **HER (Hindsight Experience Replay)** : après chaque épisode échoué, relabelliser rétrospectivement les transitions comme des succès pour les angles réellement atteints. Si la porte a atteint 0.02 rad à un moment, créer des transitions virtuelles où l'objectif était 0.02 rad → succès atteint → Q-values positives apprises. Pas besoin de succès réels pour apprendre.
 
 ---
 
-### val_02 — Success Rate + Intervalle de Confiance
-![Success Rate CI](run_sac_3M/val_02_success_rate_ci.png)
+## Run SAC HER — en cours
 
-**Ce que c'est :** le même success rate mais avec les bornes basse et haute de l'intervalle de confiance à 95% (calculé sur le petit nombre d'épisodes de validation).
+**Config :** `open_single_door_sac_her.yaml`
+**Commande :** `make train-sac-her`
 
-**Ce qu'on veut voir :** les 3 courbes qui montent ensemble avec un intervalle qui se resserre (plus d'épisodes = estimation plus précise).
+### Paramètres clés
 
----
+| Paramètre | Valeur |
+|---|---|
+| `use_her` | true |
+| `her_n_sampled_goal` | 4 (4 goals virtuels par transition réelle) |
+| `her_goal_strategy` | `future` (goals = états futurs du même épisode) |
+| `theta_success` | 0.15 rad (objectif HER, atteint progressivement) |
+| `policy` | `MultiInputPolicy` (gère les observations dict) |
+| Reward | **sparse** : 0 si theta ≥ theta_success, -1 sinon |
 
-### val_03 — Failure Rate
-![Failure Rate](run_sac_3M/val_03_failure_rate.png)
+### Principe de HER
 
-**Ce que c'est :** taux d'échec = 1 - success rate. Complémentaire du val_01, utile pour visualiser les régressions (si le success rate baisse, le failure rate monte).
+Pour chaque épisode où la porte a atteint un angle maximum `θ_max` :
+1. On garde les transitions réelles avec reward sparse (-1 car θ_success=0.15 jamais atteint)
+2. On crée 4 transitions virtuelles par step où l'objectif est remplacé par un angle futur réellement atteint dans l'épisode → ces transitions ont reward=0 (succès virtuel)
 
-**Ce qu'on veut voir :** descend vers 0.
+Résultat : le critic apprend que "ouvrir la porte à X rad est bien" même si X < 0.15. L'actor est guidé vers des mouvements qui ouvrent davantage la porte à chaque épisode.
 
----
-
-### val_04 — Episode Return (mean)
-![Return Mean](run_sac_3M/val_04_return_mean.png)
-
-**Ce que c'est :** récompense cumulée moyenne par épisode de validation. Inclut toutes les composantes du shaping + le bonus de succès.
-
-**Ce qu'on veut voir :** monte au cours du temps. Corrélé avec le success rate mais plus granulaire : même si l'agent ne réussit pas encore, un return croissant indique qu'il progresse (il ouvre davantage la porte).
-
----
-
-### val_05 — Episode Return (mean / median / std)
-![Return Full](run_sac_3M/val_05_return_full.png)
-
-**Ce que c'est :** vue complète du return : moyenne, médiane et écart-type sur les épisodes de validation.
-
-**Ce qu'on veut voir :** moyenne et médiane qui convergent (distribution symétrique = comportement stable), écart-type qui diminue (moins de variance entre épisodes).
+Les courbes seront disponibles dans [`run_sac_her/`](run_sac_her/) après 200k steps.
 
 ---
 
-### val_06 — Door Angle Final (mean)
-![Door Angle Final](run_sac_3M/val_06_door_angle_final_mean.png)
+## Référence des métriques
 
-**Ce que c'est :** angle d'ouverture de la porte **à la fin** de l'épisode, moyenné sur tous les épisodes de validation. Normalisé entre 0 (fermée) et 1 (complètement ouverte). Le seuil de succès est à 0.90.
+### Métriques train (internes SAC)
 
-**Ce qu'on veut voir :** monte vers 0.90+. Même si l'épisode se termine sans succès, un angle final élevé indique que l'agent avance dans la bonne direction.
+| Métrique | Ce qu'elle mesure | Valeur saine |
+|---|---|---|
+| `train/actor_loss` | Objectif de la politique (négatif = Q-value moyenne) | Décroissant (plus négatif), stable |
+| `train/critic_loss` | MSE entre Q-valeur prédite et cible TD | Décroissant, < 1 à convergence |
+| `train/ent_coef` | Coefficient d'entropie α | Fixe à 0.1 (v3+), pas de crash vers 0 |
+| `train/learning_rate` | LR instantané (cosine schedule) | Décroît de 3e-4 à 1e-5 |
+| `train/n_updates` | Nombre cumulé de gradient updates | Ligne droite, confirme que le train tourne |
 
----
+### Métriques reward_hack (training rolling)
 
-### val_07 — Door Angle (final mean / final std / max mean)
-![Door Angle Full](run_sac_3M/val_07_door_angle_full.png)
+| Métrique | Ce qu'elle mesure | Valeur saine |
+|---|---|---|
+| `reward_hack/theta_best_mean` | Meilleur angle porte atteint par épisode (rad) | Croissant, > 0.1 à 300k |
+| `reward_hack/train_success_rate` | Taux de succès en training (avec exploration) | Doit devenir > 0 avant la validation |
+| `reward_hack/success_frac` | Part de la récompense venant du bonus sparse | Croît quand vrais succès commencent |
+| `reward_hack/approach_frac` | Part venant de l'approche (hover-hack detector) | Faible si l'agent ouvre vraiment |
+| `reward_hack/progress_frac` | Part venant de l'ouverture progressive | Élevé en milieu d'apprentissage |
+| `reward_hack/oscillation_frac` | Part des pénalités d'oscillation | Proche de 0 |
+| `reward_hack/stagnation_rate` | Fraction d'épisodes où la porte ne bouge plus | Proche de 0 |
+| `reward_hack/reward_without_success` | Return moyen des épisodes échoués | Pas trop négatif (reward hacking proxy) |
 
-**Ce que c'est :** trois angles en un graphe : l'angle final moyen, son écart-type, et le meilleur angle atteint pendant l'épisode (max). La différence entre max et final indique si l'agent ouvre la porte mais ne la maintient pas ouverte.
+### Métriques validation (évaluations déterministes)
 
-**Ce qu'on veut voir :** final mean et max mean proches (l'agent tient la porte ouverte), std faible (comportement stable).
-
----
-
-### val_08 — Episode Length (mean)
-![Episode Length](run_sac_3M/val_08_episode_length_mean.png)
-
-**Ce que c'est :** durée moyenne des épisodes en nombre de steps. Les épisodes se terminent soit par un succès (porte ouverte à 90%), soit par timeout (500 steps).
-
-**Ce qu'on veut voir :** diminue au cours du temps si l'agent apprend à réussir plus vite. Attention : si les épisodes sont tous très courts ET que le success rate est bas, c'est un problème (l'agent se bloque tôt).
-
----
-
-### val_09 — Episode Length (mean / std)
-![Episode Length Full](run_sac_3M/val_09_episode_length_full.png)
-
-**Ce que c'est :** longueur des épisodes avec l'écart-type.
-
-**Ce qu'on veut voir :** std qui diminue = comportement de plus en plus cohérent entre les épisodes.
-
----
-
-### val_10 — Action Magnitude (mean)
-![Action Magnitude](run_sac_3M/val_10_action_magnitude_mean.png)
-
-**Ce que c'est :** norme L2 moyenne des actions produites par la politique. Les actions sont les commandes du bras (en espace OSC — position/orientation cible). Une magnitude élevée = mouvements amples et brusques. Une magnitude faible = mouvements petits et précis.
-
-**Ce qu'on veut voir :** modérée et stable. Trop élevée = risque de mouvements violents. Trop faible = l'agent bouge à peine.
+| Métrique | Ce qu'elle mesure | Valeur saine |
+|---|---|---|
+| `val_return_mean` | Récompense cumulative par épisode | Croissant |
+| `val_success_rate` | Taux de succès (politique déterministe) | **Métrique principale**, veut → 1.0 |
+| `val_door_angle_final_mean` | Angle porte en fin d'épisode (rad) | Croissant, > theta_success |
+| `val_door_angle_max_mean` | Meilleur angle atteint dans l'épisode | Croissant |
+| `val_episode_length_mean` | Durée des épisodes (steps) | Diminue si l'agent réussit plus vite |
+| `val_approach_frac_mean` | Fraction reward approche (hover-hack) | Faible |
+| `val_action_magnitude_mean` | Norme L2 des actions | Modérée (0.3–0.7) |
+| `val_action_smoothness_mean` | Fluidité des actions (jerk) | Croissant vers 1 |
+| `val_stagnation_steps_mean` | Steps sans progression porte | Proche de 0 |
+| `val_sign_changes_mean` | Changements de direction de la porte | Proche de 0 |
+| `val_reward_without_success` | Return épisodes échoués | Croissant (même sans succès) |
 
 ---
 
-### val_11 — Action Magnitude (mean / std)
-![Action Magnitude Full](run_sac_3M/val_11_action_magnitude_full.png)
+## Résumé de la progression
 
-**Ce que c'est :** magnitude des actions avec l'écart-type.
+```
+v1 (500k) → ent_coef crash (α→0, critic loss 40 000+)         → 0% succès
+    ↓ Fix: ent_coef=auto_0.1, target_entropy=-4
+v2 (900k) → α crash quand même (log_prob toujours < target)   → 0% succès
+    ↓ Fix: ent_coef=0.1 FIXE (plus d'auto-tuning)
+v3 (400k) → stable, mais porte quasi-fermée (cold start)       → 0% succès
+    ↓ Fix: curriculum (theta_success=0.40, spawn réduit)
+v3_curriculum (500k) → pic à 300k (0.021 rad), puis régression → 0% succès
+    ↓ Fix: HER (relabellisation rétroactive des goals)
+HER (en cours) → objectif: premier succès réel
+```
 
-**Ce qu'on veut voir :** std faible = politique stable et déterministe.
-
----
-
-### val_12 — Action Smoothness
-![Action Smoothness](run_sac_3M/val_12_action_smoothness.png)
-
-**Ce que c'est :** score de fluidité des actions. Mesure à quel point les actions consécutives sont similaires (faible variation = mouvements fluides). Calculé comme la corrélation ou la variation entre actions successives.
-
-**Ce qu'on veut voir :** monte vers 1.0. Une valeur faible indique des jerks (changements brusques de commande) qui peuvent stresser le robot et indiquer une politique instable.
-
----
-
-### val_13 — Approach Fraction (validation)
-![Approach Frac](run_sac_3M/val_13_approach_frac.png)
-
-**Ce que c'est :** même métrique que rh_04, mais calculée sur les épisodes de validation déterministes. Fraction de la récompense provenant du guidage vers la poignée.
-
-**Ce qu'on veut voir :** faible et décroissant. Si c'est élevé sur la validation, l'agent a vraiment appris à hover-hack et pas juste sur les épisodes d'entraînement bruités.
-
----
-
-### val_14 — Reward Without Success (validation)
-![Reward w/o Success](run_sac_3M/val_14_reward_without_success.png)
-
-**Ce que c'est :** même métrique que rh_06, sur les épisodes de validation. Récompense cumulée sans le bonus de succès.
-
-**Ce qu'on veut voir :** croît progressivement. En fin d'entraînement, si le success rate est proche de 1, ce signal doit être dominé par le bonus de succès (visible sur val_04).
-
----
-
-### val_15 — Sign Changes (validation)
-![Sign Changes](run_sac_3M/val_15_sign_changes.png)
-
-**Ce que c'est :** même que rh_09, sur les épisodes de validation. Nombre moyen de changements de direction de la porte.
-
-**Ce qu'on veut voir :** proche de 0 en fin d'entraînement. Sur les épisodes déterministes, si l'agent oscille encore, c'est un vrai problème de politique.
-
----
-
-### val_16 — Stagnation Steps (validation)
-![Stagnation Steps](run_sac_3M/val_16_stagnation_steps.png)
-
-**Ce que c'est :** même que rh_11, sur les épisodes de validation. Steps de stagnation par épisode.
-
-**Ce qu'on veut voir :** proche de 0. Sur la validation déterministe, la stagnation est un signe que la politique est bloquée.
-
----
-
-### val_17 — Num Episodes Run
-![Num Episodes](run_sac_3M/val_17_num_episodes.png)
-
-**Ce que c'est :** nombre d'épisodes évalués à chaque checkpoint de validation. Configuré à `n_eval_episodes=5` dans ce run.
-
-**Ce qu'on veut voir :** constant à 5. Si ce nombre varie, c'est qu'il y a eu un problème lors de l'évaluation (timeout, crash worker).
-
----
-
-### val_18 — Success CI Low
-![CI Low](run_sac_3M/val_18_success_ci_lo.png)
-
-**Ce que c'est :** borne basse de l'intervalle de confiance à 95% sur le success rate. Avec seulement 5 épisodes, cet intervalle est large — il faut l'interpréter avec prudence.
-
-**Ce qu'on veut voir :** monte vers 1.0 avec la borne haute (val_19).
-
----
-
-### val_19 — Success CI High
-![CI High](run_sac_3M/val_19_success_ci_hi.png)
-
-**Ce que c'est :** borne haute de l'intervalle de confiance. Indique le meilleur cas plausible du success rate réel.
-
-**Ce qu'on veut voir :** monte vers 1.0. Idéalement les bornes basse et haute convergent (plus d'épisodes de validation = intervalles plus serrés).
+Chaque itération a résolu un problème précis mais en a révélé un nouveau. Le diagnostic s'est affiné à chaque run grâce aux métriques détaillées (reward_hack, critic_loss, theta_best).
