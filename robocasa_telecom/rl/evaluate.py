@@ -1,8 +1,3 @@
-"""Evaluation entrypoint for trained RL checkpoints on RoboCasa.
-
-Supports PPO, SAC, and A2C — the algorithm is read from the train YAML config
-(``train.algorithm``) so the same script works for all methods.
-"""
 
 from __future__ import annotations
 
@@ -26,7 +21,6 @@ ALGO_MAP = {
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments for evaluation."""
 
     parser = argparse.ArgumentParser(description="Evaluate RL checkpoint on RoboCasa")
     parser.add_argument("--config", required=True, help="Path to train YAML config")
@@ -39,7 +33,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Evaluate a checkpoint and export aggregate metrics."""
 
     args = parse_args()
 
@@ -60,7 +53,7 @@ def main() -> None:
     successes = []
 
     for ep in range(int(args.num_episodes)):
-        # Offset seed by episode index to avoid replaying the exact same reset.
+                                                                               
         obs, _ = env.reset(seed=args.seed + ep)
         done = False
         ep_ret = 0.0

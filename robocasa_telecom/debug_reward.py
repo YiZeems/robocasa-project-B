@@ -1,4 +1,3 @@
-"""CLI wrapper — run via: python -m robocasa_telecom.debug_reward"""
 
 from .tools.debug_reward import main
 

@@ -1,4 +1,3 @@
-"""CLI wrapper for sanity-check entrypoint."""
 
 from .tools.sanity import main
 

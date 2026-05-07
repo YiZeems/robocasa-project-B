@@ -1,16 +1,3 @@
-"""Compare training results across multiple runs / algorithms.
-
-Usage
------
-# Compare all runs in the default outputs/ directory:
-    python scripts/compare_runs.py
-
-# Compare specific run directories:
-    python scripts/compare_runs.py --runs outputs/OpenCabinet_ppo_seed0_* outputs/OpenCabinet_sac_seed0_*
-
-# Export results to CSV:
-    python scripts/compare_runs.py --csv results/comparison.csv
-"""
 
 from __future__ import annotations
 
@@ -43,7 +30,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_summary(run_dir: Path) -> dict | None:
-    """Load train_summary.json from a run directory, return None if missing."""
     summary_path = run_dir / "train_summary.json"
     if not summary_path.exists():
         return None
@@ -85,7 +71,7 @@ def print_table(rows: list[dict]) -> None:
     print(header_line)
     print(sep_line)
 
-    # Sort by algorithm then seed for readability.
+                                                  
     for row in sorted(rows, key=lambda r: (str(r["algorithm"]), str(r["seed"]))):
         print("  ".join(str(row[h]).ljust(col_widths[h]) for h in headers))
 
@@ -117,7 +103,7 @@ def main() -> None:
     if args.runs:
         run_dirs = [Path(p) for r in args.runs for p in Path(".").glob(r) if Path(p).is_dir()]
         if not run_dirs:
-            # Fallback: treat each entry as a literal path
+                                                          
             run_dirs = [Path(r) for r in args.runs if Path(r).is_dir()]
     else:
         outputs_root = Path(args.outputs_root)

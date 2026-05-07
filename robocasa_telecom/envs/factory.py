@@ -1,8 +1,3 @@
-"""Environment factory and compatibility adapters for RoboCasa + Robosuite.
-
-This module centralizes all environment creation logic so train/eval/sanity use the same
-instantiation path, with explicit fallbacks for version and wrapper differences.
-"""
 
 from __future__ import annotations
 
@@ -16,7 +11,7 @@ try:
     import gymnasium as gym
     from gymnasium import spaces
     from gymnasium.spaces import utils as space_utils
-except ModuleNotFoundError:  # pragma: no cover - handled by runtime checks.
+except ModuleNotFoundError:                                                 
     gym = None
     spaces = None
     space_utils = None
@@ -26,7 +21,6 @@ from ..utils.io import load_yaml
 
 @dataclass
 class EnvConfig:
-    """Typed environment parameters loaded from YAML."""
 
     task: str = "OpenCabinet"
     robots: str = "PandaOmron"
@@ -45,9 +39,8 @@ class EnvConfig:
     ignore_done: bool = False
     obj_registries: tuple[str, ...] = ("objaverse",)
     use_gym_wrapper: bool = False
-    # Set by _make_envs before SubprocVecEnv to lock obs shape across all workers.
-    # Different kitchen layouts may expose different obs keys; without locking,
-    # SubprocVecEnv's np.stack() fails when worker obs shapes diverge.
+                                                                                  
+                                                                               
     obs_keys: tuple[str, ...] | None = None
     obs_shapes: dict[str, tuple[int, ...]] | None = None
 
@@ -59,11 +52,6 @@ else:
 
 
 class GymnasiumAdapter(_GymEnvBase):
-    """Adapter for robosuite GymWrapper to enforce Gymnasium reset/step contract.
-
-    Some robosuite versions return 4-tuples and others 5-tuples. This adapter normalizes
-    the API and enforces truncation at the configured horizon.
-    """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
@@ -74,12 +62,11 @@ class GymnasiumAdapter(_GymEnvBase):
         self._horizon = int(horizon)
         self._episode_steps = 0
 
-        # Forward action / observation spaces from wrapped env.
+                                                               
         self.action_space = self._env.action_space
         self.observation_space = self._env.observation_space
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
-        """Reset environment and always return `(obs, info)` as Gymnasium expects."""
 
         del options
         self._episode_steps = 0
@@ -87,7 +74,7 @@ class GymnasiumAdapter(_GymEnvBase):
         try:
             out = self._env.reset(seed=seed)
         except TypeError:
-            # Older wrappers may not accept seed argument.
+                                                          
             out = self._env.reset()
 
         if isinstance(out, tuple) and len(out) == 2:
@@ -95,7 +82,6 @@ class GymnasiumAdapter(_GymEnvBase):
         return out, {}
 
     def step(self, action):
-        """Normalize output tuple shape and enforce `truncated` on horizon overflow."""
 
         out = self._env.step(action)
         if not isinstance(out, tuple):
@@ -126,16 +112,6 @@ class GymnasiumAdapter(_GymEnvBase):
 
 
 class ObsAugmentWrapper(_GymEnvBase):
-    """Appends [door_open_amount, eef_to_handle_x/y/z] to the flattened obs.
-
-    Wraps a RawRoboCasaAdapter and reads live fixture state from the cached
-    values that RewardShapingWrapper stores after each step.  This gives the
-    policy direct access to task-relevant state without any extra sim queries.
-
-    The 4 appended values sit at obs[-4:]:
-        obs[-4]    door_open_amount  – mean normalized joint angle in [0, 1]
-        obs[-3:]   eef_to_handle     – (handle_pos - eef_pos) in robot frame [m]
-    """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
@@ -157,7 +133,7 @@ class ObsAugmentWrapper(_GymEnvBase):
         open_amt = 0.0
         eef_to_handle = np.zeros(3, dtype=np.float32)
         try:
-            shaped_env = self._env.raw_env  # RewardShapingWrapper
+            shaped_env = self._env.raw_env                        
             open_amt = getattr(shaped_env, "_last_open", 0.0)
             handle_pos = getattr(shaped_env, "_last_handle_pos", None)
             eef_pos = getattr(shaped_env, "_last_eef_pos", None)
@@ -190,12 +166,6 @@ class ObsAugmentWrapper(_GymEnvBase):
 
 
 class RawRoboCasaAdapter(_GymEnvBase):
-    """Adapter around raw RoboCasa env with observation flattening for SB3.
-
-    Stable-Baselines3 PPO with MLP policy expects flat vector observations. RoboCasa often
-    returns dict observations; this adapter selects numeric leaves and flattens them into a
-    deterministic key order.
-    """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 20}
 
@@ -229,8 +199,8 @@ class RawRoboCasaAdapter(_GymEnvBase):
         )
 
         if canonical_obs_keys is not None and canonical_obs_shapes is not None:
-            # Use the probe env's canonical keys/shapes so all SubprocVecEnv
-            # workers produce identically-shaped obs regardless of kitchen layout.
+                                                                            
+                                                                                  
             self._obs_keys = canonical_obs_keys
             self._dict_space = spaces.Dict({
                 key: spaces.Box(
@@ -247,7 +217,6 @@ class RawRoboCasaAdapter(_GymEnvBase):
 
     @staticmethod
     def _select_obs(obs: Any) -> dict[str, np.ndarray]:
-        """Extract numeric observation entries; fallback to single `obs` vector."""
 
         if isinstance(obs, dict):
             selected: dict[str, np.ndarray] = {}
@@ -265,7 +234,6 @@ class RawRoboCasaAdapter(_GymEnvBase):
         return {"obs": arr}
 
     def _build_dict_space(self, obs: Any):
-        """Build Gym Dict space once from first observation."""
 
         selected = self._select_obs(obs)
         ordered_keys = tuple(sorted(selected.keys()))
@@ -283,12 +251,6 @@ class RawRoboCasaAdapter(_GymEnvBase):
         return ordered_keys, dict_space
 
     def _flatten_obs(self, obs: Any) -> np.ndarray:
-        """Flatten observations while keeping a fixed key order across resets/episodes.
-
-        Each key's value is forced to the canonical shape so that different kitchen
-        layouts (which may vary key presence or even value size for the same key)
-        always produce an identically-sized flat vector — required for SubprocVecEnv.
-        """
         selected = self._select_obs(obs)
         aligned = {}
         for key in self._obs_keys:
@@ -308,7 +270,6 @@ class RawRoboCasaAdapter(_GymEnvBase):
         return np.asarray(flat, dtype=np.float32)
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
-        """Reset raw env and return flattened observation."""
 
         del options
         self._episode_steps = 0
@@ -322,7 +283,6 @@ class RawRoboCasaAdapter(_GymEnvBase):
         return self._flatten_obs(out), {}
 
     def step(self, action):
-        """Support both old and new step tuple conventions from wrapped envs."""
 
         out = self.raw_env.step(action)
         if not isinstance(out, tuple):
@@ -353,7 +313,6 @@ class RawRoboCasaAdapter(_GymEnvBase):
 
 
 def _resolve_controller_config(env_cfg: EnvConfig):
-    """Resolve controller config with broad compatibility fallbacks."""
 
     from robosuite.controllers import load_composite_controller_config
 
@@ -377,12 +336,11 @@ def _resolve_controller_config(env_cfg: EnvConfig):
         try:
             return load_controller_config(default_controller=env_cfg.controller)
         except Exception:
-            # Last-resort fallback to default controller to avoid hard failure.
+                                                                               
             return load_composite_controller_config(controller=None, robot=env_cfg.robots)
 
 
 def load_env_config(path: str | Path) -> EnvConfig:
-    """Load environment YAML and return normalized `EnvConfig`."""
 
     data = load_yaml(path)
     env_data = data.get("env", data)
@@ -415,13 +373,8 @@ def load_env_config(path: str | Path) -> EnvConfig:
 
 
 def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
-    """Instantiate RoboCasa environment using the unified project configuration.
 
-    Raises:
-        RuntimeError: when required RoboCasa assets are missing.
-    """
-
-    import robocasa  # noqa: F401  # Register RoboCasa tasks in robosuite.
+    import robocasa                                                       
     import robosuite
     from robosuite.wrappers.gym_wrapper import GymWrapper
     from .reward_shaping import RewardShapingWrapper
@@ -429,7 +382,7 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
     controller_cfg = _resolve_controller_config(env_cfg)
     task_name = env_cfg.task
 
-    # Keep compatibility with naming found in course material and helper zip.
+                                                                             
     task_aliases = {
         "OpenSingleDoor": "OpenCabinet",
         "OpenDoor": "OpenCabinet",
@@ -456,14 +409,12 @@ def make_env_from_config(env_cfg: EnvConfig, seed: int | None = None):
             obj_registries=env_cfg.obj_registries,
         )
 
-        # Wrap raw env with shaped rewards before flattening observations.
-        # RoboCasa's built-in reward_shaping flag is unused in the current
-        # version; this wrapper provides the dense signal instead.
+                                                                          
         shaped_env = RewardShapingWrapper(raw_env)
 
         if env_cfg.use_gym_wrapper:
             try:
-                # Initialize once before wrapping so robot metadata is populated.
+                                                                                 
                 shaped_env.reset()
                 gym_env = GymWrapper(shaped_env, keys=None)
                 adapter = GymnasiumAdapter(

@@ -1,9 +1,3 @@
-"""RL training entrypoint for RoboCasa tasks.
-
-Supports PPO, SAC, and A2C via the ``algorithm`` key in the train YAML config.
-This module is intentionally self-contained so it can be called from local scripts,
-SLURM batch jobs, or direct `python -m` invocations with the same behavior.
-"""
 
 from __future__ import annotations
 
@@ -26,7 +20,7 @@ from ..envs.factory import EnvConfig, load_env_config, make_env_from_config
 from ..utils.io import ensure_dir, load_yaml
 from ..utils.success import infer_success
 
-# Supported algorithms — extend here to add new ones.
+                                                     
 ALGO_MAP = {
     "PPO": PPO,
     "SAC": SAC,
@@ -34,19 +28,11 @@ ALGO_MAP = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Picklable env factory — must be a module-level function (not a lambda /
-# inner function) so Windows multiprocessing "spawn" can pickle it for
-# SubprocVecEnv worker processes.
-# ---------------------------------------------------------------------------
-
 def _make_env_fn(env_cfg: EnvConfig, seed: int | None) -> Any:
-    """Create one env instance inside a SubprocVecEnv worker."""
     return make_env_from_config(env_cfg, seed=seed)
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments for training."""
 
     parser = argparse.ArgumentParser(description="Train RL agent on RoboCasa task")
     parser.add_argument("--config", required=True, help="Path to train YAML config")
@@ -94,11 +80,6 @@ def _build_model(
     tensorboard_root: Path,
     seed: int,
 ) -> Any:
-    """Instantiate the right SB3 model based on ``algorithm``.
-
-    Each algorithm only receives the hyperparameters it understands — passing
-    PPO-specific keys (e.g. ``clip_range``) to SAC would raise an error.
-    """
     algo_cls = ALGO_MAP[algorithm]
     common = dict(
         policy=train_cfg.get("policy", "MlpPolicy"),
@@ -140,16 +121,6 @@ def _build_model(
 
 
 def _evaluate_policy(model: Any, env: Monitor, episodes: int) -> dict[str, Any]:
-    """Run a quick deterministic evaluation after training completes.
-
-    Distance metrics use float("nan") for episodes where the handle was never
-    resolved, so averages are computed over valid episodes only.
-    eval_valid_dist_count reports how many episodes had a usable distance.
-
-    Hover-without-opening detection:
-        eval_hover_without_open_mean counts steps where dist < 10 cm AND
-        delta_open <= 0. High value = agent stays near handle but door not moving.
-    """
 
     returns = []
     success_flags = []
@@ -159,10 +130,10 @@ def _evaluate_policy(model: Any, env: Monitor, episodes: int) -> dict[str, Any]:
     final_dists: list[float] = []
     steps_near_10: list[int] = []
     steps_near_5: list[int] = []
-    delta_positive_steps: list[int] = []  # steps with Δopen > 0
-    delta_sums: list[float] = []          # total accumulated positive Δopen per episode
-    hover_no_open: list[int] = []         # steps: dist < 10cm AND door not moving
-    grasp_means: list[float] = []         # mean gripper closure when near handle
+    delta_positive_steps: list[int] = []                        
+    delta_sums: list[float] = []                                                        
+    hover_no_open: list[int] = []                                                 
+    grasp_means: list[float] = []                                                
 
     for _ in range(episodes):
         obs, _ = env.reset()
@@ -179,7 +150,7 @@ def _evaluate_policy(model: Any, env: Monitor, episodes: int) -> dict[str, Any]:
         n_delta_pos = 0
         ep_delta_sum = 0.0
         n_hover_no_open = 0
-        grasp_vals: list[float] = []  # closure values when near handle
+        grasp_vals: list[float] = []                                   
 
         while not done:
             action, _state = model.predict(obs, deterministic=True)
@@ -188,7 +159,7 @@ def _evaluate_policy(model: Any, env: Monitor, episodes: int) -> dict[str, Any]:
             ep_success = ep_success or infer_success(info, env)
             done = bool(terminated or truncated)
 
-            # --- Open amount: info key takes priority over obs tail ---
+                                                                        
             if "_dbg_open" in info:
                 open_now = float(info["_dbg_open"])
                 max_open = max(max_open, open_now)
@@ -202,7 +173,7 @@ def _evaluate_policy(model: Any, env: Monitor, episodes: int) -> dict[str, Any]:
                 ep_delta_sum += delta_open
             prev_open = open_now
 
-            # --- Distance: info key takes priority; NaN means unresolved ---
+                                                                             
             close_to_handle = False
             if "_dbg_dist" in info:
                 d = float(info["_dbg_dist"])
@@ -228,16 +199,16 @@ def _evaluate_policy(model: Any, env: Monitor, episodes: int) -> dict[str, Any]:
                     if d < 0.05:
                         n_near_5 += 1
 
-            # Hover-without-opening: close to handle but door not moving this step.
+                                                                                   
             if close_to_handle and delta_open <= 1e-6:
                 n_hover_no_open += 1
 
-            # Gripper closure when near handle (from _dbg_r_grasp or gripper obs).
+                                                                                  
             if close_to_handle:
                 if "_dbg_r_grasp" in info:
                     grasp_vals.append(float(info["_dbg_r_grasp"]))
                 elif hasattr(obs, "__len__") and len(obs) >= 6:
-                    # obs[-5:-3] would be gripper_qpos if augmented obs layout holds
+                                                                                    
                     pass
 
         returns.append(ep_return)
@@ -282,14 +253,13 @@ def _evaluate_policy(model: Any, env: Monitor, episodes: int) -> dict[str, Any]:
 
 
 def _export_training_curve(monitor_path: Path, out_csv: Path) -> None:
-    """Convert SB3 monitor CSV format to a compact plotting-friendly CSV."""
 
     if not monitor_path.exists():
         return
 
     rows: list[dict[str, float]] = []
     with monitor_path.open("r", encoding="utf-8") as f:
-        # SB3 monitor files include JSON metadata comment lines starting with '#'.
+                                                                                  
         reader = csv.DictReader(line for line in f if not line.startswith("#"))
         for idx, row in enumerate(reader):
             rows.append(
@@ -308,7 +278,6 @@ def _export_training_curve(monitor_path: Path, out_csv: Path) -> None:
 
 
 def _resolve_run_context(cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    """Resolve config-derived runtime context with CLI overrides."""
 
     env_cfg_path = cfg.get("env", {}).get("config_path", "configs/env/open_single_door.yaml")
     env_cfg = load_env_config(env_cfg_path)
@@ -346,29 +315,16 @@ def _make_envs(
     run_output_dir: Path,
     vec_env_cls: str = "dummy",
 ) -> tuple[Any, Any, Path]:
-    """Return (train_env, eval_env, monitor_path).
-
-    vec_env_cls:
-        "dummy"  — DummyVecEnv (sequential, no fork overhead, good for debugging)
-        "subproc" — SubprocVecEnv (true parallelism via subprocess per env;
-                    requires picklable factory and CUDA in subprocess on Windows)
-
-    eval_env is always a single Monitor-wrapped env (standard gym semantics).
-    monitor_path points to the CSV file _export_training_curve should read.
-    """
     if n_envs > 1:
         monitor_dir = ensure_dir(run_output_dir / "monitors")
 
         if vec_env_cls == "subproc":
             from functools import partial
 
-            # Lock canonical obs keys/shapes so all workers produce identical obs sizes.
-            # Skip probe if already loaded from obs_config.json (resume case) —
-            # probing a new random layout would overwrite the original training's obs
-            # shape and cause SB3 "Observation spaces do not match" on model.load().
+                                                                                        
             if env_cfg.obs_keys is None:
                 _probe = make_env_from_config(env_cfg, seed=None)
-                _adapter = _probe._env  # ObsAugmentWrapper._env == RawRoboCasaAdapter
+                _adapter = _probe._env                                                
                 env_cfg.obs_keys = _adapter._obs_keys
                 env_cfg.obs_shapes = {
                     k: tuple(v.shape) for k, v in _adapter._dict_space.spaces.items()
@@ -380,8 +336,7 @@ def _make_envs(
                 print(f"[train] canonical obs (pre-loaded): {len(env_cfg.obs_keys)} keys, "
                       f"base_size={sum(s[0] for s in env_cfg.obs_shapes.values())}")
 
-            # Each factory is a partial of the module-level _make_env_fn so
-            # it survives pickle over the subprocess Pipe on Windows (spawn).
+                                                                           
             fns = [partial(_make_env_fn, env_cfg, None) for _ in range(n_envs)]
             print(f"[train] Starting {n_envs} SubprocVecEnv workers "
                   f"(if this hangs or crashes with BrokenPipeError/EOFError/"
@@ -399,13 +354,13 @@ def _make_envs(
                     "--config configs/train/open_single_door_ppo_parallel_6env.yaml ...\n"
                     "    or add --n-envs 6 to your current command"
                 ) from exc
-            # VecMonitor records ep rewards/lengths for TensorBoard and
-            # writes a monitor CSV in the same format as single-env Monitor.
+                                                                       
+                                                                            
             vec_monitor_path = monitor_dir / "vec_monitor"
             train_env = VecMonitor(train_env, str(vec_monitor_path))
             monitor_path = Path(str(vec_monitor_path) + ".monitor.csv")
         else:
-            # DummyVecEnv — kept as fallback; no real parallelism
+                                                                 
             def _make_fn():
                 return make_env_from_config(env_cfg, seed=None)
 
@@ -423,7 +378,6 @@ def _make_envs(
 
 
 def main() -> None:
-    """Train an RL agent and export reproducible artifacts."""
 
     args = parse_args()
     cfg = load_yaml(args.config)
@@ -447,12 +401,12 @@ def main() -> None:
     rollout_size = n_steps * n_envs
 
     if vec_env_cls == "subproc":
-        # Windows requires the "spawn" start method (default on Windows).
-        # Guard so the script body isn't re-executed in worker processes.
+                                                                         
+                                                                         
         import multiprocessing
         multiprocessing.set_start_method("spawn", force=False)
 
-    # --- Device detection (always runs, regardless of requested device) ---
+                                                                            
     try:
         import torch as _torch
         _cuda_available = _torch.cuda.is_available()
@@ -475,7 +429,7 @@ def main() -> None:
     _effective_device = "cuda" if (device in ("auto", "cuda") and _cuda_available) else "cpu"
     batch_size = int(train_cfg.get("batch_size", 256))
 
-    # --- Startup banner ---
+                            
     print(
         f"[train] ── Device ──────────────────────────────────────────────\n"
         f"[train]   requested={device!r}  effective={_effective_device!r}\n"
@@ -497,15 +451,12 @@ def main() -> None:
             raise FileNotFoundError(f"Checkpoint not found: {resume_path}")
 
         algo_cls = ALGO_MAP[algorithm]
-        # First load without env to read the checkpoint's step counter only.
+                                                                            
         _probe = algo_cls.load(str(resume_path), device=device)
         start_steps = _probe.num_timesteps
         del _probe
 
-        # Pre-load canonical obs config from the checkpoint directory so the env
-        # reproduces the exact same obs shape as the original training run.
-        # Without this, _make_envs would probe a new random kitchen layout and
-        # potentially produce a different obs_size, causing SB3's space-check to fail.
+                                                                                
         _obs_config_path = resume_path.parent / "obs_config.json"
         if _obs_config_path.exists():
             with _obs_config_path.open(encoding="utf-8") as _f:
@@ -535,8 +486,8 @@ def main() -> None:
         train_env, eval_env, monitor_path = _make_envs(
             env_cfg, seed, n_envs, run_output_dir, vec_env_cls
         )
-        # Load with the actual env so SB3 sets n_envs correctly regardless of
-        # what n_envs the checkpoint was originally trained with.
+                                                                             
+                                                                 
         model = algo_cls.load(str(resume_path), env=train_env, device=device)
         model.tensorboard_log = str(tensorboard_root)
         reset_num_timesteps = False
@@ -551,7 +502,7 @@ def main() -> None:
         model = _build_model(algorithm, train_cfg, train_env, tensorboard_root, seed)
         reset_num_timesteps = True
 
-    # Persist canonical obs config so eval/record scripts reproduce the same obs shape.
+                                                                                       
     if env_cfg.obs_keys is not None and env_cfg.obs_shapes is not None:
         obs_cfg_data = {
             "obs_keys": list(env_cfg.obs_keys),
@@ -602,7 +553,7 @@ def main() -> None:
     with (run_output_dir / "train_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
-    # Store resolved config for reproducibility and experiment tracing.
+                                                                       
     with (run_output_dir / "resolved_train_config.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False)
 

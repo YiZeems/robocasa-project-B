@@ -1,33 +1,3 @@
-"""Debug reward shaping for a single RoboCasa episode.
-
-Loads a trained checkpoint (or runs a random policy with --random) and
-prints per-step reward component breakdown using the debug keys that
-RewardShapingWrapper writes into the info dict.
-
-Before the first episode the script runs two verification sections:
-
-  HANDLE BODY VERIFICATION
-    - prints all sim bodies containing "handle"
-    - confirms the selected body exists in MuJoCo via body_pos lookup
-
-  JOINT STATE VERIFICATION
-    - prints door_joint_names resolved by the wrapper
-    - calls get_joint_state(env, joint_names) explicitly and reports success/fail
-    - reads open amount at reset (expected: 0.0) and after 5 random steps
-      to confirm the metric is not stuck at 0
-
-Usage:
-    # Random policy (no checkpoint needed — fastest sanity check)
-    python -m robocasa_telecom.tools.debug_reward \\
-        --config configs/train/open_single_door_ppo.yaml \\
-        --random --episodes 2
-
-    # With trained checkpoint
-    python -m robocasa_telecom.tools.debug_reward \\
-        --config configs/train/open_single_door_ppo.yaml \\
-        --checkpoint checkpoints/<run_id>/final_model.zip \\
-        --episodes 3
-"""
 
 from __future__ import annotations
 
@@ -54,12 +24,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-# ---------------------------------------------------------------------------
-# Wrapper-chain traversal helper
-# ---------------------------------------------------------------------------
-
 def _find_reward_wrapper(env: Any) -> RewardShapingWrapper | None:
-    """Traverse wrapper chain and return the first RewardShapingWrapper found."""
     probe = env
     for _ in range(10):
         if isinstance(probe, RewardShapingWrapper):
@@ -76,10 +41,6 @@ def _find_reward_wrapper(env: Any) -> RewardShapingWrapper | None:
         probe = inner
     return None
 
-
-# ---------------------------------------------------------------------------
-# Verification sections
-# ---------------------------------------------------------------------------
 
 def _verify_handle(shaped: RewardShapingWrapper) -> None:
     print("\n" + "=" * 72)
@@ -122,7 +83,7 @@ def _verify_joints(shaped: RewardShapingWrapper, env: Any) -> None:
         fxtr = getattr(shaped._env, "fxtr", None)
         raw_env = shaped._env
 
-        # door_joint_names from fixture
+                                       
         try:
             djn = list(fxtr.door_joint_names) if fxtr else []
         except Exception as e:
@@ -136,7 +97,7 @@ def _verify_joints(shaped: RewardShapingWrapper, env: Any) -> None:
         if not jnames:
             print("  ERROR: _joint_names is empty — r_open will always be 0 ✗")
         else:
-            # Explicit call to get_joint_state at reset (door should be closed)
+                                                                               
             try:
                 js_reset = fxtr.get_joint_state(raw_env, jnames)
                 print(f"  get_joint_state() at reset  = {dict((k, round(v, 3)) for k, v in js_reset.items())}"
@@ -146,7 +107,7 @@ def _verify_joints(shaped: RewardShapingWrapper, env: Any) -> None:
                 print("=" * 72)
                 return
 
-            # Take 5 random steps and read open amount to confirm metric moves
+                                                                              
             open_vals = []
             for _ in range(5):
                 action = env.action_space.sample()
@@ -167,10 +128,6 @@ def _verify_joints(shaped: RewardShapingWrapper, env: Any) -> None:
     print("=" * 72 + "\n")
 
 
-# ---------------------------------------------------------------------------
-# Per-episode helpers
-# ---------------------------------------------------------------------------
-
 def _header(ep: int) -> None:
     print(f"\n{'='*72}")
     print(f"  Episode {ep}")
@@ -179,10 +136,6 @@ def _header(ep: int) -> None:
           f"{'dist':>6}  {'open%':>6}  {'ok'}")
     print(f"{'-'*72}")
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     args = parse_args()
@@ -208,7 +161,7 @@ def main() -> None:
     print(f"[debug_reward] obs_dim={env.observation_space.shape[0]}  "
           f"action_dim={env.action_space.shape[0]}")
 
-    # First reset so RewardShapingWrapper resolves handle + joints.
+                                                                   
     obs, _ = env.reset()
     shaped = _find_reward_wrapper(env)
 
@@ -217,7 +170,7 @@ def main() -> None:
     else:
         _verify_handle(shaped)
         _verify_joints(shaped, env)
-        # Re-reset so episode 1 starts clean after the joint-verification steps.
+                                                                                
         obs, _ = env.reset()
 
     for ep in range(1, args.episodes + 1):

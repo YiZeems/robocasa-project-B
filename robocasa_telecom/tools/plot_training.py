@@ -1,19 +1,3 @@
-"""Generate publication-ready training plots from RoboCasa run artifacts.
-
-Reads training_curve.csv + train_summary.json from every run directory under
-``outputs/`` and (optionally) TensorBoard event files under ``logs/tensorboard/``.
-
-Produces up to four PNG figures in --output-dir:
-  training_reward.png   — smoothed episode reward vs cumulative timesteps
-  episode_length.png    — episode length over training (proxy for early stopping)
-  eval_metrics.png      — bar chart of final eval metrics per algorithm
-  tensorboard.png       — rollout/ep_rew_mean from TensorBoard (if available)
-
-Usage:
-    python -m robocasa_telecom.tools.plot_training
-    python -m robocasa_telecom.tools.plot_training --smooth 30 --output-dir figures/report
-    python -m robocasa_telecom.tools.plot_training --runs-dir outputs/ --tb-dir logs/tensorboard/
-"""
 
 from __future__ import annotations
 
@@ -26,24 +10,17 @@ from typing import Any
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Colour palette — one consistent colour per algorithm
-# ---------------------------------------------------------------------------
+                                                                             
 ALGO_COLORS = {
-    "PPO": "#2196F3",   # blue
-    "SAC": "#F44336",   # red
-    "A2C": "#4CAF50",   # green
+    "PPO": "#2196F3",         
+    "SAC": "#F44336",        
+    "A2C": "#4CAF50",          
     "UNKNOWN": "#9E9E9E",
 }
 ALGO_MARKERS = {"PPO": "o", "SAC": "s", "A2C": "^", "UNKNOWN": "D"}
 
 
-# ---------------------------------------------------------------------------
-# Data loading helpers
-# ---------------------------------------------------------------------------
-
 def _load_runs(runs_dir: Path) -> list[dict[str, Any]]:
-    """Return list of run dicts with keys: run_id, algorithm, episodes, summary."""
     runs = []
     for run_dir in sorted(runs_dir.iterdir()):
         if not run_dir.is_dir():
@@ -83,7 +60,6 @@ def _load_runs(runs_dir: Path) -> list[dict[str, Any]]:
 
 
 def _smooth(values: list[float], window: int) -> np.ndarray:
-    """Centred rolling mean with edge padding."""
     arr = np.array(values, dtype=float)
     if window <= 1 or len(arr) < window:
         return arr
@@ -93,17 +69,11 @@ def _smooth(values: list[float], window: int) -> np.ndarray:
 
 
 def _cumsteps(episodes: list[dict]) -> np.ndarray:
-    """Cumulative timestep axis from episode lengths."""
     lengths = np.array([e["length"] for e in episodes], dtype=float)
     return np.cumsum(lengths)
 
 
-# ---------------------------------------------------------------------------
-# TensorBoard reader (optional)
-# ---------------------------------------------------------------------------
-
 def _read_tb(tb_dir: Path, tag: str = "rollout/ep_rew_mean") -> list[dict]:
-    """Return list of {algo, steps, values} dicts by reading event files."""
     try:
         from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
     except ImportError:
@@ -113,7 +83,7 @@ def _read_tb(tb_dir: Path, tag: str = "rollout/ep_rew_mean") -> list[dict]:
     for event_dir in sorted(tb_dir.iterdir()):
         if not event_dir.is_dir():
             continue
-        # Infer algorithm from folder name: PPO_1, SAC_2, …
+                                                           
         folder = event_dir.name.upper()
         algo = "UNKNOWN"
         for a in ("PPO", "SAC", "A2C"):
@@ -149,10 +119,6 @@ def _read_tb(tb_dir: Path, tag: str = "rollout/ep_rew_mean") -> list[dict]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Plot helpers
-# ---------------------------------------------------------------------------
-
 def _apply_style(ax, title: str, xlabel: str, ylabel: str) -> None:
     ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
     ax.set_xlabel(xlabel, fontsize=11)
@@ -170,10 +136,6 @@ def _millify(x: float, _pos=None) -> str:
         return f"{x/1_000:.0f}k"
     return str(int(x))
 
-
-# ---------------------------------------------------------------------------
-# Figure 1 — training reward curves
-# ---------------------------------------------------------------------------
 
 def plot_training_reward(runs: list[dict], smooth: int, out: Path) -> None:
     import matplotlib.pyplot as plt
@@ -195,9 +157,9 @@ def plot_training_reward(runs: list[dict], smooth: int, out: Path) -> None:
             ys = [e["reward"] for e in eps]
             smoothed = _smooth(ys, smooth)
             label = algo if i == 0 else None
-            # Raw — faint
+                         
             ax.plot(xs, ys, color=color, alpha=0.12, linewidth=0.8)
-            # Smoothed — bold
+                             
             ax.plot(xs, smoothed, color=color, linewidth=2.2,
                     label=label, solid_capstyle="round")
 
@@ -211,10 +173,6 @@ def plot_training_reward(runs: list[dict], smooth: int, out: Path) -> None:
     plt.close(fig)
     print(f"  Saved: {out}")
 
-
-# ---------------------------------------------------------------------------
-# Figure 2 — episode length
-# ---------------------------------------------------------------------------
 
 def plot_episode_length(runs: list[dict], smooth: int, out: Path) -> None:
     import matplotlib.pyplot as plt
@@ -250,14 +208,10 @@ def plot_episode_length(runs: list[dict], smooth: int, out: Path) -> None:
     print(f"  Saved: {out}")
 
 
-# ---------------------------------------------------------------------------
-# Figure 3 — final eval metrics bar chart
-# ---------------------------------------------------------------------------
-
 def plot_eval_metrics(runs: list[dict], out: Path) -> None:
     import matplotlib.pyplot as plt
 
-    # Aggregate by algorithm: keep run with highest eval_return_mean
+                                                                    
     best: dict[str, dict] = {}
     for run in runs:
         s = run["summary"]
@@ -280,7 +234,7 @@ def plot_eval_metrics(runs: list[dict], out: Path) -> None:
         ("eval_success_rate",   "Success rate"),
     ]
 
-    # Only include metrics present in at least one run
+                                                      
     present = [
         (k, label)
         for k, label in metrics_keys
@@ -299,7 +253,7 @@ def plot_eval_metrics(runs: list[dict], out: Path) -> None:
         for i, algo in enumerate(algos):
             s = best[algo]["summary"]
             val = s.get(key, 0.0)
-            # Scale max_open_mean by 10 so it reads as a 0-10 percentage
+                                                                        
             if key == "eval_max_open_mean":
                 val *= 10
             color = ALGO_COLORS.get(algo, ALGO_COLORS["UNKNOWN"])
@@ -319,10 +273,6 @@ def plot_eval_metrics(runs: list[dict], out: Path) -> None:
     plt.close(fig)
     print(f"  Saved: {out}")
 
-
-# ---------------------------------------------------------------------------
-# Figure 4 — TensorBoard rollout reward
-# ---------------------------------------------------------------------------
 
 def plot_tensorboard(tb_dir: Path, smooth: int, out: Path) -> None:
     import matplotlib.pyplot as plt
@@ -352,10 +302,6 @@ def plot_tensorboard(tb_dir: Path, smooth: int, out: Path) -> None:
     plt.close(fig)
     print(f"  Saved: {out}")
 
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Generate training plots for the report")

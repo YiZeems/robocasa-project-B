@@ -1,4 +1,3 @@
-"""Compatibility re-export for environment factory APIs."""
 
 from .envs.factory import EnvConfig, load_env_config, make_env_from_config
 

@@ -1,25 +1,3 @@
-"""Interactive live viewer: load a checkpoint and watch the agent in the MuJoCo 3D viewer.
-
-Requires a real display (local machine or SSH with X11 forwarding).
-For headless clusters, use record_video.py instead.
-
-Usage:
-    # Watch trained agent
-    python -m robocasa_telecom.watch_agent \\
-        --config configs/train/open_single_door_ppo.yaml \\
-        --checkpoint checkpoints/<run_id>/final_model.zip
-
-    # Watch random policy (no checkpoint needed)
-    python -m robocasa_telecom.watch_agent \\
-        --config configs/train/open_single_door_ppo.yaml \\
-        --random
-
-    # Slow down playback for easier observation
-    python -m robocasa_telecom.watch_agent \\
-        --config configs/train/open_single_door_ppo.yaml \\
-        --checkpoint checkpoints/<run_id>/final_model.zip \\
-        --sleep 0.05
-"""
 
 from __future__ import annotations
 
@@ -78,7 +56,7 @@ def main() -> None:
     env_cfg_path = cfg.get("env", {}).get("config_path", "configs/env/open_single_door.yaml")
     env_cfg = load_env_config(env_cfg_path)
 
-    # Enable live 3D viewer
+                           
     env_cfg.has_renderer = True
     env_cfg.has_offscreen_renderer = False
     env_cfg.use_camera_obs = False
@@ -120,7 +98,7 @@ def main() -> None:
                 done = bool(terminated or truncated)
                 step += 1
 
-                # Render the 3D viewer frame
+                                            
                 env.render()
 
                 if args.sleep > 0:
